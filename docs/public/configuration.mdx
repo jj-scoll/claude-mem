@@ -207,6 +207,8 @@ Use [LiteLLM Gateway](configuration/litellm-gateway) when you want `CLAUDE_MEM_P
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `CLAUDE_MEM_OBSERVER_THINKING` | `disabled` | The `thinking` parameter the Claude observer sends. `disabled` saves tokens on Anthropic-native endpoints. `omit` sends no `thinking` field, for a gateway whose upstream model always thinks and rejects `disabled` (for example GLM's error 1210). `adaptive` lets the model decide how much to think, the only way to turn thinking on for models that accept no budget, such as Claude Haiku 5.5. `enabled` or `enabled:<budget>` (default budget `1024`) turns thinking on and spends thinking tokens on every observer request. The server runtime's `claude` provider reads the same setting from its environment, and adds an enabled budget to `CLAUDE_MEM_SERVER_MAX_OUTPUT_TOKENS` so thinking can't spend the answer's tokens |
+| `CLAUDE_MEM_OBSERVER_EFFORT` | `low` | Effort (`low`, `medium`, `high`, `xhigh`, `max`) for one-shot Claude observer prompts such as field condensing. Haiku 5.5 always thinks adaptively, so effort is what bounds thinking tokens. |
+| `CLAUDE_MEM_OBSERVER_CACHE_TTL` | `5m` | Prompt-cache TTL (`5m` or `1h`) for one-shot Claude observer prompts, sent to the CLI as `CLAUDE_CODE_PROMPT_CACHE_TTL`. These prompts are never read back from cache, so `5m` avoids the 2x-priced 1h write. |
 
 If an Anthropic-compatible gateway rejects the `thinking` parameter with a 400, the worker's observer drops the parameter for the rest of that session and retries the same batch, so nothing is lost while you change the setting. The server's provider doesn't retry; set `omit` for such a gateway.
 
