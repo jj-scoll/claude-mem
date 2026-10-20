@@ -260,6 +260,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_MAX_CONCURRENT_AGENTS: string;  
   CLAUDE_MEM_OBSERVER_MAX_CONVERSATION_CHARS: string;
   CLAUDE_MEM_OBSERVER_THINKING: string;  // Observer thinking param: 'disabled' | 'enabled[:budget]' | 'omit' (#4732)
+  CLAUDE_MEM_OBSERVER_EFFORT: string;  // Effort for one-shot observer prompts (field condense, wrap-up): 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  CLAUDE_MEM_OBSERVER_CACHE_TTL: string;  // Prompt-cache TTL for one-shot observer prompts: '5m' | '1h'
   CLAUDE_MEM_OBSERVER_CONTEXT_WINDOW: string;  // Observer model context window in tokens; '' = resolve automatically
   CLAUDE_MEM_OBSERVER_MAX_OUTPUT_TOKENS: string;  // Output-token cap on every HTTP observer request (OpenRouter, custom, gateway, Gemini)
   CLAUDE_MEM_OBSERVE_BARE_PROMPTS: string;  // 'true' sends a user prompt to the observer on its own; default 'false' carries it on the next tool event
@@ -523,6 +525,8 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_MAX_CONCURRENT_AGENTS: '2',  // Max concurrent Claude SDK agent subprocesses
     CLAUDE_MEM_OBSERVER_MAX_CONVERSATION_CHARS: '400000',  // Retire an observer conversation past this size and start a fresh generation (#3800)
     CLAUDE_MEM_OBSERVER_THINKING: 'disabled',  // Observer thinking param: 'disabled' (shipped) | 'enabled[:budget]' | 'omit' — an always-thinking gateway upstream rejects 'disabled' with 400/1210 (#4732)
+    CLAUDE_MEM_OBSERVER_EFFORT: 'low',  // One-shot observer prompts (field condense, wrap-up) run at this effort; Haiku 5.5 always thinks adaptively, so effort is the lever
+    CLAUDE_MEM_OBSERVER_CACHE_TTL: '5m',  // One-shot prompts are never read back from cache, so skip the 2x-priced 1h write (CLAUDE_CODE_PROMPT_CACHE_TTL)
     CLAUDE_MEM_OBSERVER_CONTEXT_WINDOW: '',  // Observer model context window in tokens; '' = resolve it (OpenRouter catalogue, Gemini/Claude maps). Lowers the budget above to half the window (#3625)
     CLAUDE_MEM_OBSERVER_MAX_OUTPUT_TOKENS: '4096',  // max_tokens / max_completion_tokens / Gemini maxOutputTokens on every HTTP observer request (#3868)
     CLAUDE_MEM_OBSERVE_BARE_PROMPTS: 'false',  // 'true' restores one observer call per user prompt; 'false' carries the prompt on the next tool event's call

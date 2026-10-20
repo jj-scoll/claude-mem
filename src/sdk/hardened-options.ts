@@ -136,6 +136,43 @@ export function resolveObserverThinkingOption(raw: string | undefined): Observer
   return { type: 'disabled' };
 }
 
+/** SDK effort levels accepted by `CLAUDE_MEM_OBSERVER_EFFORT`. */
+export type ObserverEffort = NonNullable<Extract<Options['effort'], string>>;
+const OBSERVER_EFFORT_LEVELS: readonly ObserverEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** Effort for one-shot observer prompts when the setting is unset or invalid. */
+export const DEFAULT_OBSERVER_EFFORT: ObserverEffort = 'low';
+
+/**
+ * Parse `CLAUDE_MEM_OBSERVER_EFFORT` (`low | medium | high | xhigh | max`,
+ * case-insensitive). Unset/empty is the default silently; anything else
+ * unrecognized falls back to the default with a warn.
+ */
+export function resolveObserverEffort(raw: unknown): ObserverEffort {
+  const value = raw == null ? '' : String(raw).trim().toLowerCase();
+  if ((OBSERVER_EFFORT_LEVELS as readonly string[]).includes(value)) return value as ObserverEffort;
+  if (value !== '') {
+    logger.warn('SDK', `Ignoring unrecognized CLAUDE_MEM_OBSERVER_EFFORT value "${String(raw)}"; using ${DEFAULT_OBSERVER_EFFORT} (supported: ${OBSERVER_EFFORT_LEVELS.join(' | ')})`);
+  }
+  return DEFAULT_OBSERVER_EFFORT;
+}
+
+export type ObserverCacheTtl = '5m' | '1h';
+/** Prompt-cache TTL for one-shot observer prompts when the setting is unset or invalid. */
+export const DEFAULT_OBSERVER_CACHE_TTL: ObserverCacheTtl = '5m';
+
+/**
+ * Parse `CLAUDE_MEM_OBSERVER_CACHE_TTL` (`5m | 1h`, case-insensitive). It is
+ * forwarded to the CLI as CLAUDE_CODE_PROMPT_CACHE_TTL.
+ */
+export function resolveObserverCacheTtl(raw: unknown): ObserverCacheTtl {
+  const value = raw == null ? '' : String(raw).trim().toLowerCase();
+  if (value === '5m' || value === '1h') return value;
+  if (value !== '') {
+    logger.warn('SDK', `Ignoring unrecognized CLAUDE_MEM_OBSERVER_CACHE_TTL value "${String(raw)}"; using ${DEFAULT_OBSERVER_CACHE_TTL} (supported: 5m | 1h)`);
+  }
+  return DEFAULT_OBSERVER_CACHE_TTL;
+}
+
 export interface HardenedSdkOptionsInput {
   /** Which call site is constructing options — flows into audit entries. */
   source: 'Observer' | 'KnowledgeAgent';
@@ -154,6 +191,15 @@ export interface HardenedSdkOptionsInput {
    * provider strips the param itself after one such rejection.
    */
   thinking?: ObserverThinkingOption;
+
+  /**
+   * Standalone one-shot prompts only (CLAUDE_MEM_OBSERVER_EFFORT /
+   * CLAUDE_MEM_OBSERVER_CACHE_TTL). Honored for `source: 'Observer'` and omitted
+   * when the caller passes nothing, so the long-lived generation path keeps the
+   * CLI defaults. The TTL travels as CLAUDE_CODE_PROMPT_CACHE_TTL in `env`.
+   */
+  effort?: ObserverEffort;
+  promptCacheTtl?: ObserverCacheTtl;
 
   // Pass-through fields the caller still owns:
   model: string;
@@ -203,8 +249,11 @@ export function buildHardenedSdkOptions(input: HardenedSdkOptionsInput): Options
   return {
     model: input.model,
     cwd: input.cwd ?? ensureObserverSessionsDir(),
-    env: input.env,
+    env: input.source === 'Observer' && input.promptCacheTtl
+      ? { ...input.env, CLAUDE_CODE_PROMPT_CACHE_TTL: input.promptCacheTtl }
+      : input.env,
     pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable,
+    ...(input.source === 'Observer' && input.effort ? { effort: input.effort } : {}),
     ...(input.abortController ? { abortController: input.abortController } : {}),
     ...(input.resume ? { resume: input.resume } : {}),
     ...(input.spawnClaudeCodeProcess ? { spawnClaudeCodeProcess: input.spawnClaudeCodeProcess } : {}),

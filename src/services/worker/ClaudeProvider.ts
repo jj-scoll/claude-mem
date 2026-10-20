@@ -32,7 +32,7 @@ import {
 
 // @ts-ignore - Agent SDK types may not be available
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { buildHardenedSdkOptions, resolveObserverThinkingOption } from '../../sdk/hardened-options.js';
+import { buildHardenedSdkOptions, resolveObserverThinkingOption, resolveObserverEffort, resolveObserverCacheTtl } from '../../sdk/hardened-options.js';
 import { describeObserverOutputShape, formatEmptyOutputReason } from '../../sdk/output-classifier.js';
 import { ClassifiedProviderError, isClassified } from './provider-errors.js';
 import { resolveSummaryTierModel, resolveTierAlias } from './model-aliases.js';
@@ -1067,6 +1067,7 @@ export class ClaudeProvider {
     claudePath: string,
   ): Promise<string | null> {
     const isolatedEnv = sanitizeEnv(await buildIsolatedEnvWithFreshOAuth(true, { standIn: context.standIn }));
+    const observerSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     const controller = new AbortController();
     const abort = () => controller.abort();
     const signals = context.signals ?? [];
@@ -1096,6 +1097,9 @@ export class ClaudeProvider {
                 ? 'omit'
                 : SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OBSERVER_THINKING,
             ),
+            // One-shot prompts only: low effort and a 5m cache by default.
+            effort: resolveObserverEffort(observerSettings.CLAUDE_MEM_OBSERVER_EFFORT),
+            promptCacheTtl: resolveObserverCacheTtl(observerSettings.CLAUDE_MEM_OBSERVER_CACHE_TTL),
           }),
           maxTurns: 1,
         },
