@@ -8,15 +8,28 @@ import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsMana
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { logger } from '../../../../utils/logger.js';
-import type { WorkStateFields } from '../../../sqlite/work-state.js';
+import { HANDOFF_LIST, type WorkStateFields } from '../../../sqlite/work-state.js';
 import {
+  buildHandoffSection,
   fitWorkStateLines,
   renderWorkStateLines,
   WORK_STATE_SECTION_CHARACTER_LIMIT,
 } from '../../../context/sections/WorkStateRenderer.js';
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** CLAUDE_MEM_HANDOFF_MAX_AGE_HOURS's default, also used when the setting is not a positive number. */
+const DEFAULT_HANDOFF_MAX_AGE_HOURS = 168;
+
 /** One write is a few short fields; anything bigger would crowd the SessionStart section. */
 export const MAX_WORK_STATE_FIELDS_JSON_CHARS = 2_000;
+
+/** A handoff never shows in that section (it is claimed whole at SessionStart), so it gets more room. */
+export const MAX_HANDOFF_FIELDS_JSON_CHARS = 4_000;
+
+function maxFieldsJsonChars(list: string): number {
+  return list.toLowerCase() === HANDOFF_LIST ? MAX_HANDOFF_FIELDS_JSON_CHARS : MAX_WORK_STATE_FIELDS_JSON_CHARS;
+}
 
 // z.record intentionally drops __proto__; here every field is a primitive,
 // so validate own entries and copy with spread to keep literal data keys safely.
@@ -35,11 +48,17 @@ const workStateWriteSchema = z.object({
   cwd: z.string().trim().min(1),
   list: z.string().trim().min(1).max(200),
   fields: workStateFieldsSchema
-    .refine(fields => Object.keys(fields).length > 0, 'fields must set at least one key')
-    .refine(
-      fields => JSON.stringify(fields).length <= MAX_WORK_STATE_FIELDS_JSON_CHARS,
-      `fields must be at most ${MAX_WORK_STATE_FIELDS_JSON_CHARS} characters as JSON`,
-    ),
+    .refine(fields => Object.keys(fields).length > 0, 'fields must set at least one key'),
+}).superRefine(({ list, fields }, ctx) => {
+  const limit = maxFieldsJsonChars(list);
+  if (JSON.stringify(fields).length > limit) {
+    ctx.addIssue({ code: 'custom', path: ['fields'], message: `fields must be at most ${limit} characters as JSON` });
+  }
+});
+
+const handoffClaimSchema = z.object({
+  cwd: z.string().trim().min(1),
+  source: z.enum(['startup', 'resume', 'clear', 'compact']).optional(),
 });
 
 /**
@@ -57,7 +76,36 @@ export class WorkStateRoutes extends BaseRouteHandler {
   setupRoutes(app: express.Application): void {
     app.post('/api/work-state/entries', validateBody(workStateWriteSchema), this.handleWrite.bind(this));
     app.get('/api/work-state', this.handleRead.bind(this));
+    app.post('/api/handoff/claim', validateBody(handoffClaimSchema), this.handleClaimHandoff.bind(this));
   }
+
+  /**
+   * SessionStart's handoff: the checkout's fresh, unconsumed handoff as the
+   * block the hook prepends, consumed by this call; 204 when there is none.
+   */
+  private handleClaimHandoff = this.wrapHandler((req: Request, res: Response): void => {
+    const { cwd, source } = req.body as z.infer<typeof handoffClaimSchema>;
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
+      res.status(204).end();
+      return;
+    }
+    const maxAgeHours = Number(settings.CLAUDE_MEM_HANDOFF_MAX_AGE_HOURS);
+    const maxAgeMs = (Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : DEFAULT_HANDOFF_MAX_AGE_HOURS) * HOUR_MS;
+
+    const nowEpoch = Date.now();
+    const checkout = getProjectContext(cwd);
+    const handoff = this.dbManager.getSessionStore().claimHandoff(checkout.allProjects, source, nowEpoch, maxAgeMs);
+    if (!handoff) {
+      res.status(204).end();
+      return;
+    }
+    logger.info('WORKER', 'Handoff claimed for SessionStart', { project: handoff.project, entryId: handoff.id, source });
+    // The consuming row is a `work_state` sync op, like a write.
+    this.dbManager.getCloudSync()?.notify();
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(buildHandoffSection(handoff, nowEpoch));
+  });
 
   private handleWrite = this.wrapHandler((req: Request, res: Response): void => {
     const { cwd, list, fields } = req.body as z.infer<typeof workStateWriteSchema>;
@@ -76,6 +124,10 @@ export class WorkStateRoutes extends BaseRouteHandler {
     logger.debug('WORKER', 'Work state entry saved', { project: checkout.primary, list });
     // The row is a `work_state` sync op: nudge the push drain (null when sync is off).
     this.dbManager.getCloudSync()?.notify();
+    if (list.toLowerCase() === HANDOFF_LIST) {
+      res.send(`Saved the handoff in ${checkout.primary}. The next session here is shown it once.`);
+      return;
+    }
     // Only what is still open, cut like the SessionStart section, so a long-kept
     // list does not repeat its closed items on every write.
     const openLines = renderWorkStateLines(store.getWorkStateEntries(checkout.allProjects, list), Date.now());

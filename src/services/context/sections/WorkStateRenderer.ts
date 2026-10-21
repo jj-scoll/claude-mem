@@ -1,4 +1,4 @@
-import type { WorkStateEntry, WorkStateFields, WorkStateValue } from '../../sqlite/work-state.js';
+import { HANDOFF_LIST, type WorkStateEntry, type WorkStateFields, type WorkStateValue } from '../../sqlite/work-state.js';
 import { describeDuration } from '../../../shared/observer-health.js';
 import { relativeTimePlaceholder } from '../../../shared/context-cache.js';
 
@@ -28,9 +28,6 @@ const CLOSED_STATUSES = new Set(['done', 'dropped']);
 /** Reserved list of durable project facts: shown every session, never stale, hidden or closed. */
 export const FACTS_LIST = 'facts';
 
-/** Reserved list claude-mem keeps the handoff in; it never shows as an open list. */
-export const HANDOFF_LIST = 'handoff';
-
 /** Lists the SessionStart section never shows under "Still open", matched in any case. */
 const RESERVED_LISTS = new Set([FACTS_LIST, HANDOFF_LIST]);
 
@@ -39,6 +36,9 @@ export const FACTS_SECTION_CHARACTER_LIMIT = 1_200;
 
 /** Longest fact value the SessionStart section shows. */
 const FACT_VALUE_CHARS = 240;
+
+/** Longest handoff block SessionStart carries; the handoff skill asks for 3000. */
+export const HANDOFF_SECTION_CHARACTER_LIMIT = 3_500;
 
 export const WORK_STATE_RULE = [
   '# Work state: your to-do lists and working state',
@@ -228,6 +228,32 @@ export function buildFactsSection(entries: WorkStateEntry[], characterLimit: num
     .map(([key, value]) => `- ${key}: ${cutValue(value, FACT_VALUE_CHARS)}`);
   if (lines.length === 0) return '';
   return fitWorkStateLines('# Project facts (durable)', lines, characterLimit, `work_state_read list=${FACTS_LIST}`);
+}
+
+/**
+ * The block a claimed handoff is shown as: a heading with its age, its text
+ * cut at a line boundary to fit HANDOFF_SECTION_CHARACTER_LIMIT, then where
+ * the rest is (the observations it names, and HANDOFF.md).
+ */
+export function buildHandoffSection(handoff: WorkStateEntry, nowEpoch: number): string {
+  const heading = `# Handoff from a previous session (written ${describeDuration(Math.max(0, nowEpoch - handoff.created_at_epoch))} ago, shown once)`;
+  const { obs_ids: obsIds, project_dir: projectDir } = handoff.fields;
+  const details = `Details: ${obsIds ? `get_observations ids ${obsIds}; ` : ''}full text in ${projectDir ? `${projectDir}/HANDOFF.md` : 'HANDOFF.md'}`;
+  const text = String(handoff.fields.text).trim();
+  const whole = [heading, text, details].join('\n');
+  if (whole.length <= HANDOFF_SECTION_CHARACTER_LIMIT) return whole;
+
+  const cutDetails = `Cut to fit. ${details}`;
+  const room = HANDOFF_SECTION_CHARACTER_LIMIT - heading.length - cutDetails.length - 2;
+  let kept = '';
+  for (const line of text.split('\n')) {
+    const candidate = kept ? `${kept}\n${line}` : line;
+    if (candidate.length > room) break;
+    kept = candidate;
+  }
+  // A first line longer than the room is cut inside the line.
+  if (!kept) kept = `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
+  return [heading, kept, cutDetails].join('\n');
 }
 
 /** `heading`, then as many of `lines` as fit in `characterLimit`, then how many were left out. */

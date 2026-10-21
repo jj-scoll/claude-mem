@@ -56,6 +56,38 @@ export const TEAM_BRIEF_TIMEOUT_MS = 2_000;
 /** Below this much room a cut brief says too little to be worth sending. */
 const MIN_CUT_TEAM_BRIEF_CHARS = 300;
 
+/** How long SessionStart waits for the worker to hand over the handoff. */
+export const HANDOFF_CLAIM_TIMEOUT_MS = 2_000;
+
+/**
+ * How every claimed block starts (WorkStateRenderer.buildHandoffSection). A
+ * worker older than the claim route answers 404 with a page of its own, which
+ * the worker call hands back as text: anything else is not a handoff.
+ */
+const HANDOFF_SECTION_PREFIX = '# Handoff from a previous session';
+
+/**
+ * The handoff block the worker claims for this session (POST /api/handoff/claim),
+ * or '' when there is none or the worker does not answer in time. The claim
+ * consumes the handoff, so it is made only once the block it joins is in hand.
+ */
+async function claimHandoffSection(cwd: string, source: NormalizedHookInput['sessionSource']): Promise<string> {
+  try {
+    const result = await executeWithWorkerFallback<string>(
+      '/api/handoff/claim',
+      'POST',
+      { cwd, ...(source ? { source } : {}) },
+      { timeoutMs: HANDOFF_CLAIM_TIMEOUT_MS },
+    );
+    return typeof result === 'string' && result.startsWith(HANDOFF_SECTION_PREFIX) ? result.trim() : '';
+  } catch (error) {
+    logger.warn('HOOK', 'Handoff claim failed; SessionStart goes on without it', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return '';
+  }
+}
+
 /** The brief for this session, or the one line naming why there is none. */
 export function teamBriefSection(result: TeamBrainResult<TeamBrainBrief>): string {
   return result.ok
@@ -100,16 +132,17 @@ const BODY_CUT_MARKER = '[claude-mem] Older context left out to fit the SessionS
 /**
  * The last check before the block leaves the hook. The body was fitted to the
  * SessionStart target with room for what is appended here, so this only cuts
- * what was not reserved: a body cached before an upgrade, an outsized notice.
- * It gives up the brief first, then the body's tail (its oldest lines), then
- * the notices. The body's first line and the memory instructions always stay.
+ * what was not reserved: a body cached before an upgrade, an outsized notice,
+ * the handoff. It gives up the brief first, then the body's tail (its oldest
+ * lines), then the notices. The handoff, already consumed when it gets here,
+ * the body's first line and the memory instructions always stay.
  */
 export function fitSessionStartBlock(
-  parts: { notices: string[]; body: string; team: string; instructions: string },
+  parts: { handoff?: string; notices: string[]; body: string; team: string; instructions: string },
   limit: number = SESSION_START_HARD_LIMIT,
 ): string {
   const join = (notices: string[], body: string, team: string) =>
-    [...notices, body, team, parts.instructions].filter(Boolean).join('\n\n');
+    [parts.handoff ?? '', ...notices, body, team, parts.instructions].filter(Boolean).join('\n\n');
   const fits = (text: string) => deliveredBytes(text) <= limit;
   /** The block with the body cut at a line boundary to fit, or null when even its first line does not. */
   const withBodyCut = (notices: string[]): string | null => {
@@ -416,15 +449,22 @@ export const contextHandler: EventHandler = {
       }
     }
 
+    // The handoff the last session left (claude-mem:handoff), shown once.
+    // Claude Code only: other hosts have their own output limits and must not
+    // consume a Claude handoff. The server runtime has no handoff route.
+    const handoffSection = input.platform === 'claude-code' && !serverRuntime
+      ? await claimHandoffSection(cwd, input.sessionSource)
+      : '';
+
     const platform = input.platform;
     const teamSection = teamBriefRequest
       ? fitTeamBriefSection(
           teamBriefSection(await teamBriefRequest),
-          [...notices, additionalContext, memoryInstructions].filter(Boolean).join('\n\n').length,
+          [handoffSection, ...notices, additionalContext, memoryInstructions].filter(Boolean).join('\n\n').length,
           SESSION_START_HARD_LIMIT,
         )
       : '';
-    additionalContext = fitSessionStartBlock({ notices, body: additionalContext, team: teamSection, instructions: memoryInstructions });
+    additionalContext = fitSessionStartBlock({ handoff: handoffSection, notices, body: additionalContext, team: teamSection, instructions: memoryInstructions });
 
     // Antigravity CLI (like the former Gemini CLI) is hooks-based, not an
     // MCP-context-fetch platform like Codex — colorApiPath never populates
