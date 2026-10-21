@@ -29,6 +29,12 @@ export interface WorkStateEntry {
 /** Reserved list the claude-mem:handoff skill leaves the next session's handoff in. */
 export const HANDOFF_LIST = 'handoff';
 
+/** Reserved list of facts shown in every project, stored under USER_SCOPE_PROJECT whatever the writer's checkout. */
+export const USER_FACTS_LIST = 'user-facts';
+
+/** The project key user facts live under: not a checkout, so no checkout writes its own lists here. */
+export const USER_SCOPE_PROJECT = '__user__';
+
 /** A compact shows only a handoff this new: one written just before the compaction. */
 export const HANDOFF_COMPACT_MAX_AGE_MS = 30 * 60 * 1000;
 

@@ -1,4 +1,4 @@
-import { findLatestHandoff, HANDOFF_LIST, type WorkStateEntry, type WorkStateFields, type WorkStateValue } from '../../sqlite/work-state.js';
+import { findLatestHandoff, HANDOFF_LIST, USER_FACTS_LIST, type WorkStateEntry, type WorkStateFields, type WorkStateValue } from '../../sqlite/work-state.js';
 import { describeDuration } from '../../../shared/observer-health.js';
 import { relativeTimePlaceholder } from '../../../shared/context-cache.js';
 
@@ -29,10 +29,16 @@ const CLOSED_STATUSES = new Set(['done', 'dropped']);
 export const FACTS_LIST = 'facts';
 
 /** Lists the SessionStart section never shows under "Still open", matched in any case. */
-const RESERVED_LISTS = new Set([FACTS_LIST, HANDOFF_LIST]);
+const RESERVED_LISTS = new Set([FACTS_LIST, USER_FACTS_LIST, HANDOFF_LIST]);
 
 /** Facts get their own room, beside the open lists' limit. */
 export const FACTS_SECTION_CHARACTER_LIMIT = 1_200;
+
+/**
+ * User facts ride on top of the SessionStart target rather than out of the
+ * timeline (SearchRoutes leaves them out of the reserve); this caps the growth.
+ */
+export const USER_FACTS_SECTION_CHARACTER_LIMIT = 800;
 
 /** Longest fact value the SessionStart section shows. */
 const FACT_VALUE_CHARS = 240;
@@ -45,7 +51,7 @@ export const WORK_STATE_RULE = [
   "Use claude-mem's work_state_write tool to track all to-do lists and multi-step work. It is your canonical to-do list: use it instead of any built-in to-do tool.",
   '- Fields {"task": "<name>", "status": "todo"|"doing"|"done"|"dropped", ...} make a to-do item; other keys are list state (latest wins, null clears, "status": "done" closes the list)',
   '- Shown below without details: work_state_read has them (includeClosed=true adds closed items)',
-  '- Durable project facts and decisions go in list "facts", one key per fact (null deletes it); they show every session',
+  '- Durable facts: list "facts" (this project) or "user-facts" (all projects), one key per fact (null deletes it); shown every session',
 ].join('\n');
 
 export interface FoldedWorkStateList {
@@ -213,7 +219,7 @@ export function buildWorkStateContextSection(
   const openPart = openLines.length === 0
     ? 'Nothing open yet.'
     : fitWorkStateLines('Still open:', openLines, characterLimit - WORK_STATE_RULE.length - 2);
-  return [WORK_STATE_RULE, facts, openPart].filter(Boolean).join('\n\n');
+  return [WORK_STATE_RULE, buildUserFactsSection(entries), facts, openPart].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -222,12 +228,29 @@ export function buildWorkStateContextSection(
  * Facts are list state only: a task written to the list is not shown here.
  */
 export function buildFactsSection(entries: WorkStateEntry[], characterLimit: number = FACTS_SECTION_CHARACTER_LIMIT): string {
-  const facts = foldWorkStateList(entries.filter(entry => entry.list_name.toLowerCase() === FACTS_LIST)).state;
-  const lines = Object.entries(facts)
-    .filter(([key, value]) => key !== 'task' && value !== null)
-    .map(([key, value]) => `- ${key}: ${cutValue(value, FACT_VALUE_CHARS)}`);
+  const lines = [...readFacts(entries, FACTS_LIST)].map(([key, value]) => `- ${key}: ${cutValue(value, FACT_VALUE_CHARS)}`);
   if (lines.length === 0) return '';
   return fitWorkStateLines('# Project facts (durable)', lines, characterLimit, `work_state_read list=${FACTS_LIST}`);
+}
+
+/**
+ * The `user-facts` list in `entries`, shown in every project, as
+ * `buildFactsSection` shows project facts. A project fact with the same key
+ * replaces the user fact, so a project can override a user-wide default.
+ */
+export function buildUserFactsSection(entries: WorkStateEntry[], characterLimit: number = USER_FACTS_SECTION_CHARACTER_LIMIT): string {
+  const projectFacts = readFacts(entries, FACTS_LIST);
+  const lines = [...readFacts(entries, USER_FACTS_LIST)]
+    .filter(([key]) => !projectFacts.has(key))
+    .map(([key, value]) => `- ${key}: ${cutValue(value, FACT_VALUE_CHARS)}`);
+  if (lines.length === 0) return '';
+  return fitWorkStateLines('# Facts (all projects)', lines, characterLimit, `work_state_read list=${USER_FACTS_LIST}`);
+}
+
+/** Each fact still set in `listName` (any case): list state only, a task is not a fact. */
+function readFacts(entries: WorkStateEntry[], listName: string): Map<string, WorkStateValue> {
+  const facts = foldWorkStateList(entries.filter(entry => entry.list_name.toLowerCase() === listName)).state;
+  return new Map(Object.entries(facts).filter(([key, value]) => key !== 'task' && value !== null));
 }
 
 /**

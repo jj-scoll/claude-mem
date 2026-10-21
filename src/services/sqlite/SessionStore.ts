@@ -36,6 +36,7 @@ import {
   findClaimableHandoff,
   getWorkStateEntries as getWorkStateEntriesRows,
   scopeWorkStateEntries,
+  USER_SCOPE_PROJECT,
   type WorkStateEntry,
   type WorkStateFields,
 } from './work-state.js';
@@ -3136,7 +3137,8 @@ export class SessionStore {
 
   appendWorkStateEntry(entry: { project: string; listName: string; fields: WorkStateFields; createdAtEpoch?: number }): number {
     const entryId = appendWorkStateEntryRow(this.db, entry);
-    emitContextInvalidation({ projects: [entry.project] }, 'appendWorkStateEntry');
+    // Every project's block shows user facts.
+    emitContextInvalidation(entry.project === USER_SCOPE_PROJECT ? 'all' : { projects: [entry.project] }, 'appendWorkStateEntry');
     return entryId;
   }
 

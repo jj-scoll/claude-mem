@@ -446,7 +446,7 @@ describe('SearchRoutes Welcome Hint', () => {
       handler({ query: { projects: '/path/parent,/path/worktree' } } as unknown as Request, res as unknown as Response);
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(workStateEntriesStub).toHaveBeenCalledWith(['/path/parent', '/path/worktree']);
+      expect(workStateEntriesStub).toHaveBeenCalledWith(['__user__', '/path/parent', '/path/worktree']);
       const body = (res.send as any).mock.calls[0][0] as string;
       expect(body).toStartWith('# Work state: your to-do lists and working state');
       expect(body).toContain('\n\nStill open:\n- release: version=13.25.3, status=active, updated 1 minute ago\n  - [todo] publish, updated 1 minute ago');

@@ -8,7 +8,7 @@ import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsMana
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { logger } from '../../../../utils/logger.js';
-import { HANDOFF_LIST, type WorkStateFields } from '../../../sqlite/work-state.js';
+import { HANDOFF_LIST, USER_FACTS_LIST, USER_SCOPE_PROJECT, type WorkStateFields } from '../../../sqlite/work-state.js';
 import {
   buildHandoffSection,
   buildHandoffSummaryLine,
@@ -122,8 +122,11 @@ export class WorkStateRoutes extends BaseRouteHandler {
 
     const checkout = getProjectContext(cwd);
     const store = this.dbManager.getSessionStore();
-    store.appendWorkStateEntry({ project: checkout.primary, listName: list, fields });
-    logger.debug('WORKER', 'Work state entry saved', { project: checkout.primary, list });
+    // User facts are for every project: they go under one key, not the checkout's.
+    const userFacts = list.toLowerCase() === USER_FACTS_LIST;
+    const project = userFacts ? USER_SCOPE_PROJECT : checkout.primary;
+    store.appendWorkStateEntry({ project, listName: list, fields });
+    logger.debug('WORKER', 'Work state entry saved', { project, list });
     // The row is a `work_state` sync op: nudge the push drain (null when sync is off).
     this.dbManager.getCloudSync()?.notify();
     if (list.toLowerCase() === HANDOFF_LIST) {
@@ -132,8 +135,8 @@ export class WorkStateRoutes extends BaseRouteHandler {
     }
     // Only what is still open, cut like the SessionStart section, so a long-kept
     // list does not repeat its closed items on every write.
-    const openLines = renderWorkStateLines(store.getWorkStateEntries(checkout.allProjects, list), Date.now());
-    const saved = `Saved to "${list}" in ${checkout.primary}.`;
+    const openLines = renderWorkStateLines(store.getWorkStateEntries(userFacts ? [USER_SCOPE_PROJECT] : checkout.allProjects, list), Date.now());
+    const saved = `Saved to "${list}" in ${userFacts ? 'all projects' : checkout.primary}.`;
     res.send(openLines.length > 0
       ? fitWorkStateLines(`${saved} Still open in it:`, openLines, WORK_STATE_SECTION_CHARACTER_LIMIT)
       : `${saved} Nothing in it is open now.`);
@@ -149,7 +152,11 @@ export class WorkStateRoutes extends BaseRouteHandler {
     const includeClosed = req.query.includeClosed === 'true';
 
     const checkout = getProjectContext(cwd);
-    const entries = this.dbManager.getSessionStore().getWorkStateEntries(checkout.allProjects, list);
+    const store = this.dbManager.getSessionStore();
+    // A read of every list includes the user facts every project shows.
+    const entries = list?.toLowerCase() === USER_FACTS_LIST
+      ? store.getWorkStateEntries([USER_SCOPE_PROJECT], list)
+      : [...store.getWorkStateEntries(checkout.allProjects, list), ...(list ? [] : store.getWorkStateEntries([USER_SCOPE_PROJECT]))];
     const nowEpoch = Date.now();
     // A read of every list shows the handoff as one line; its text is read by name.
     const lines = renderWorkStateLines(list ? entries : entries.filter(entry => !isHandoffEntry(entry)), nowEpoch, includeClosed);

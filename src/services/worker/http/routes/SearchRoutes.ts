@@ -23,7 +23,7 @@ import {
 } from '../../../../shared/context-cache.js';
 import type { ContextCacheService, ContextVariantRender } from '../../ContextCacheService.js';
 import type { ContextReadWorkerClient } from '../../../context/ContextReadWorkerClient.js';
-import type { WorkStateEntry } from '../../../sqlite/work-state.js';
+import { USER_SCOPE_PROJECT, type WorkStateEntry } from '../../../sqlite/work-state.js';
 
 interface ContextInjectRender {
   /** The block with its time placeholders. */
@@ -32,7 +32,7 @@ interface ContextInjectRender {
   cacheable: boolean;
   readKeys?: string[];
 }
-import { buildWorkStateContextSection } from '../../../context/sections/WorkStateRenderer.js';
+import { buildUserFactsSection, buildWorkStateContextSection } from '../../../context/sections/WorkStateRenderer.js';
 import { isWorkStateEnabled } from '../../../../shared/work-state-setting.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { getViewerBaseUrl } from '../../../../shared/worker-utils.js';
@@ -189,10 +189,15 @@ export class SearchRoutes extends BaseRouteHandler {
     return false;
   }
 
+  /**
+   * The checkout's work state and the user facts every project shows. The user
+   * key goes first: the last key is the checkout's primary, which list scoping uses.
+   */
   private async readWorkStateEntries(projects: string[]): Promise<WorkStateEntry[]> {
     const store = this.searchManager.getSessionStore();
-    if (this.contextReader) return this.contextReader.workState(projects, store.getLocalSyncDeviceId());
-    return store.getWorkStateEntries(projects);
+    const keys = [USER_SCOPE_PROJECT, ...projects];
+    if (this.contextReader) return this.contextReader.workState(keys, store.getLocalSyncDeviceId());
+    return store.getWorkStateEntries(keys);
   }
 
   setupRoutes(app: express.Application): void {
@@ -541,9 +546,17 @@ export class SearchRoutes extends BaseRouteHandler {
     const workStateEnabled = isWorkStateEnabled(
       process.env.CLAUDE_MEM_WORK_STATE_ENABLED ?? settings.CLAUDE_MEM_WORK_STATE_ENABLED,
     );
+    const workStateEntries = forHuman || !workStateEnabled ? [] : await this.readWorkStateEntries(projects);
     const workStateSection = forHuman || !workStateEnabled
       ? ''
-      : buildWorkStateContextSection(await this.readWorkStateEntries(projects), 'placeholders');
+      : buildWorkStateContextSection(workStateEntries, 'placeholders');
+    // User facts are added on top of the target instead of taking room from
+    // the timeline (capped at USER_FACTS_SECTION_CHARACTER_LIMIT), so they are
+    // left out of the reserve below.
+    const userFactsSection = workStateSection ? buildUserFactsSection(workStateEntries) : '';
+    const workStateReserveChars = workStateSection
+      ? workStateSection.length + 2 - (userFactsSection ? userFactsSection.length + 2 : 0)
+      : 0;
     const withWorkState = (text: string): string =>
       workStateSection && text ? `${workStateSection}\n\n${text}` : workStateSection || text;
 
@@ -587,7 +600,7 @@ export class SearchRoutes extends BaseRouteHandler {
       // Beside the work-state section: room for what the hook appends after
       // this body once the install is in a team (the TeamBrain brief). Env
       // first, as the hook reads it.
-      reserveChars: (workStateSection ? workStateSection.length + 2 : 0) + teamBriefReserveChars({
+      reserveChars: workStateReserveChars + teamBriefReserveChars({
         CLAUDE_MEM_TEAMBRAIN_URL: process.env.CLAUDE_MEM_TEAMBRAIN_URL ?? settings.CLAUDE_MEM_TEAMBRAIN_URL,
         CLAUDE_MEM_MEMORY_INSTRUCTIONS_ENABLED: process.env.CLAUDE_MEM_MEMORY_INSTRUCTIONS_ENABLED ?? settings.CLAUDE_MEM_MEMORY_INSTRUCTIONS_ENABLED,
       }),
