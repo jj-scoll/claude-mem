@@ -108,16 +108,17 @@ describe('SessionStart block size', () => {
   };
   const jsonBytes = (text: string | undefined) => Buffer.byteLength(JSON.stringify(text ?? ''), 'utf8');
 
-  it('keeps the block within 9,000 JSON-encoded bytes by cutting the timeline tail, not the header or the instructions', async () => {
+  it('keeps the block within 9,500 JSON-encoded bytes by cutting the timeline tail, not the header or the instructions', async () => {
     memoryInstructions = undefined;
-    workerBody = bodyOfChars(7_900);
+    workerBody = bodyOfChars(8_700);
     staleReason = 'expired keychain entry';
     const { contextHandler } = await import('../../../src/cli/handlers/context.js');
 
     const result = await contextHandler.execute({ sessionId: 'size-guard', cwd: '/tmp/repo', platform: 'claude-code' });
     const block = result.hookSpecificOutput?.additionalContext;
 
-    expect(jsonBytes(block)).toBeLessThanOrEqual(9_000);
+    expect(jsonBytes(block)).toBeLessThanOrEqual(9_500);
+    expect(jsonBytes(block)).toBeGreaterThan(9_000);
     expect(block).toStartWith('[claude-mem] Claude Code OAuth token is stale: expired keychain entry');
     expect(block).toContain(`\n\n${HEADER}\n100000 8:28p ●`);
     expect(block).toContain('save_memory tool is available');
@@ -126,13 +127,13 @@ describe('SessionStart block size', () => {
 
   it('drops an oversize notice rather than the body header', async () => {
     workerBody = bodyOfChars(2_000);
-    staleReason = 'x'.repeat(9_500);
+    staleReason = 'x'.repeat(10_500);
     const { contextHandler } = await import('../../../src/cli/handlers/context.js');
 
     const result = await contextHandler.execute({ sessionId: 'size-guard-notice', cwd: '/tmp/repo', platform: 'claude-code' });
     const block = result.hookSpecificOutput?.additionalContext;
 
-    expect(jsonBytes(block)).toBeLessThanOrEqual(9_000);
+    expect(jsonBytes(block)).toBeLessThanOrEqual(9_500);
     expect(block).toStartWith(HEADER);
     expect(block).toContain(workerBody);
   });
@@ -146,16 +147,16 @@ describe('SessionStart block size', () => {
     expect(result.hookSpecificOutput?.additionalContext).toBe(workerBody);
   });
 
-  it('keeps a whole handoff, the body header and the instructions within 9,000 bytes by cutting the timeline tail', async () => {
+  it('keeps a whole handoff, the body header and the instructions within 9,500 bytes by cutting the timeline tail', async () => {
     memoryInstructions = undefined;
-    workerBody = bodyOfChars(7_900);
-    handoffClaim = `# Handoff from a previous session (written 5 minutes ago, shown once)\n${'h'.repeat(3_300)}\nDetails: full text in HANDOFF.md`;
+    workerBody = bodyOfChars(8_700);
+    handoffClaim = `# Handoff from a previous session (written 5 minutes ago, shown once)\n${'h'.repeat(3_400)}\nDetails: full text in HANDOFF.md`;
     const { contextHandler } = await import('../../../src/cli/handlers/context.js');
 
     const result = await contextHandler.execute({ sessionId: 'size-guard-handoff', cwd: '/tmp/repo', platform: 'claude-code', sessionSource: 'clear' });
     const block = result.hookSpecificOutput?.additionalContext;
 
-    expect(jsonBytes(block)).toBeLessThanOrEqual(9_000);
+    expect(jsonBytes(block)).toBeLessThanOrEqual(9_500);
     expect(block).toStartWith(`${handoffClaim}\n\n${HEADER}\n100000 8:28p ●`);
     expect(block).toContain('save_memory tool is available');
   });

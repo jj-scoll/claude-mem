@@ -167,7 +167,7 @@ function renderBlock(items: Observation[], config: ContextConfig): string {
 }
 
 describe('the SessionStart target', () => {
-  it('fits the rendered body to 8,000 characters minus what the hook appends', () => {
+  it('fits the rendered body to 8,800 characters minus what the hook appends', () => {
     const mode = ModeManager.getInstance();
     const oldMode = Reflect.get(mode, 'activeMode');
     const oldId = Reflect.get(mode, 'activeModeId');
@@ -185,7 +185,8 @@ describe('the SessionStart target', () => {
         { config: makeConfig({ fullObservationCount: 0, sessionCount: 0, showLastSummary: false }), cwd: '/fixture', project: 'fixture' });
 
       expect(text).toContain('# [fixture] recent context');
-      expect(text.length + reserveChars).toBeLessThanOrEqual(8_000);
+      expect(text.length + reserveChars).toBeLessThanOrEqual(8_800);
+      expect(text.length + reserveChars).toBeGreaterThan(8_000);
     } finally {
       Reflect.set(mode, 'activeMode', oldMode);
       Reflect.set(mode, 'activeModeId', oldId);
