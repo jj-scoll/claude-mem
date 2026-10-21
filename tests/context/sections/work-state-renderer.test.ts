@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import type { WorkStateEntry, WorkStateFields } from '../../../src/services/sqlite/work-state.js';
 import {
+  buildFactsSection,
   buildWorkStateContextSection,
   foldWorkStateList,
   renderWorkStateLines,
@@ -124,7 +125,7 @@ describe('buildWorkStateContextSection', () => {
   });
 
   it('keeps the rule short', () => {
-    expect(WORK_STATE_RULE.length).toBeLessThanOrEqual(700);
+    expect(WORK_STATE_RULE.length).toBeLessThanOrEqual(820);
   });
 
   it('shows each open item on one line, without its detail fields', () => {
@@ -200,5 +201,70 @@ describe('buildWorkStateContextSection', () => {
     expect(truncatedSection).toMatch(/\n- \.\.\.\d+ more lines?; read them with work_state_read$/);
     const keptPart = truncatedSection.slice(0, truncatedSection.lastIndexOf('\n- ...'));
     expect(fullSection.startsWith(keptPart)).toBe(true);
+  });
+});
+
+describe('facts list', () => {
+  it('tells the agent where durable facts go', () => {
+    expect(WORK_STATE_RULE).toContain('list "facts"');
+  });
+
+  it('puts facts between the rule and the open lists, never as an open list', () => {
+    const entries = [...releaseEntries(), entry('facts', { units: 'wtok = tokens weighted by base input price' }, MINUTE_MS)];
+
+    const section = buildWorkStateContextSection(entries, NOW_EPOCH);
+
+    expect(section).toStartWith(`${WORK_STATE_RULE}\n\n# Project facts (durable)\n- units: wtok = tokens weighted by base input price\n\nStill open:\n- release:`);
+    expect(section).not.toContain('- facts');
+  });
+
+  it('shows facts written 400 days ago or closed, without counting them as untouched', () => {
+    const entries = [
+      entry('facts', { 'shared-config': '~/.claude-work shares settings.json with ~/.claude' }, 400 * DAY_MS),
+      entry('facts', { status: 'done' }, 400 * DAY_MS),
+    ];
+
+    const section = buildWorkStateContextSection(entries, NOW_EPOCH);
+
+    expect(section).toContain('\n\n# Project facts (durable)\n- shared-config: ~/.claude-work shares settings.json with ~/.claude\n');
+    expect(section).not.toContain('untouched for');
+    expect(section).not.toContain('stale');
+    expect(section).toEndWith('\n\nNothing open yet.');
+  });
+
+  it('matches the facts list name in any case', () => {
+    const section = buildWorkStateContextSection([entry('Facts', { units: 'wtok' }, MINUTE_MS)], NOW_EPOCH);
+
+    expect(section).toContain('# Project facts (durable)\n- units: wtok');
+    expect(section).not.toContain('- Facts');
+  });
+
+  it('cuts each fact to 240 characters and the section to 1200, pointing at the facts list', () => {
+    const entries = Array.from({ length: 10 }, (_, index) => entry('facts', { [`fact-${index}`]: 'v'.repeat(300) }, MINUTE_MS));
+
+    const facts = buildFactsSection(entries);
+
+    expect(facts).toStartWith(`# Project facts (durable)\n- fact-0: ${'v'.repeat(239)}…\n`);
+    expect(facts.length).toBeLessThanOrEqual(1200);
+    expect(facts).toMatch(/\n- \.\.\.\d+ more lines?; read them with work_state_read list=facts$/);
+  });
+
+  it('drops a fact set to null, and renders nothing when no fact is left', () => {
+    expect(buildFactsSection([
+      entry('facts', { a: 'x', b: 'y' }, 2 * MINUTE_MS),
+      entry('facts', { a: null }, MINUTE_MS),
+    ])).toBe('# Project facts (durable)\n- b: y');
+    expect(buildFactsSection([
+      entry('facts', { a: 'x' }, 2 * MINUTE_MS),
+      entry('facts', { a: null }, MINUTE_MS),
+    ])).toBe('');
+    expect(buildWorkStateContextSection(releaseEntries(), NOW_EPOCH)).not.toContain('# Project facts');
+  });
+
+  it('never shows the handoff list as an open list', () => {
+    const section = buildWorkStateContextSection([...releaseEntries(), entry('handoff', { text: 'Goal: ship 15.0.2' }, MINUTE_MS)], NOW_EPOCH);
+
+    expect(section).not.toContain('handoff');
+    expect(section).not.toContain('Goal: ship');
   });
 });

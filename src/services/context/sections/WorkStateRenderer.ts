@@ -27,11 +27,27 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const CLOSED_STATUSES = new Set(['done', 'dropped']);
 
+/** Reserved list of durable project facts: shown every session, never stale, hidden or closed. */
+export const FACTS_LIST = 'facts';
+
+/** Reserved list claude-mem keeps the handoff in; it never shows as an open list. */
+export const HANDOFF_LIST = 'handoff';
+
+/** Lists the SessionStart section never shows under "Still open", matched in any case. */
+const RESERVED_LISTS = new Set([FACTS_LIST, HANDOFF_LIST]);
+
+/** Facts get their own room, beside the open lists' limit. */
+export const FACTS_SECTION_CHARACTER_LIMIT = 1_200;
+
+/** Longest fact value the SessionStart section shows. */
+const FACT_VALUE_CHARS = 240;
+
 export const WORK_STATE_RULE = [
   '# Work state: your to-do lists and working state',
   "Use claude-mem's work_state_write tool to track all to-do lists and multi-step work. It is your canonical to-do list: use it instead of any built-in to-do tool.",
   '- Fields {"task": "<name>", "status": "todo"|"doing"|"done"|"dropped", ...} make a to-do item; other keys are list state (latest wins, null clears, "status": "done" closes the list)',
   '- Shown below without details: work_state_read has them (includeClosed=true adds closed items)',
+  '- Durable project facts and decisions go in list "facts", one key per fact (null deletes it); they show every session',
   '- Made a file or link the person can open (PR, deck, page, report)? Set field "work_product" (URL or /absolute/path) on its item; files are copied to ~/.claude-mem/deliverables/<project>/',
 ].join('\n');
 
@@ -66,15 +82,21 @@ function isClosed(status: WorkStateValue | undefined): boolean {
   return status !== undefined && status !== null && CLOSED_STATUSES.has(String(status).toLowerCase());
 }
 
+function cutValue(value: WorkStateValue, maxChars: number): string {
+  const text = String(value);
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
 /** `key=value` pairs; null values are skipped because null clears a key. */
 function formatFields(fields: WorkStateFields, omittedKeys: string[], maxValueChars: number = Infinity): string {
   return Object.entries(fields)
     .filter(([key, value]) => !omittedKeys.includes(key) && value !== null)
-    .map(([key, value]) => {
-      const text = String(value);
-      return `${key}=${text.length > maxValueChars ? `${text.slice(0, maxValueChars - 1)}…` : text}`;
-    })
+    .map(([key, value]) => `${key}=${cutValue(value, maxValueChars)}`)
     .join(', ');
+}
+
+function isReservedList(listName: string): boolean {
+  return RESERVED_LISTS.has(listName.toLowerCase());
 }
 
 function updatedAgo(epoch: number, nowEpoch: WorkStateClock): string {
@@ -156,9 +178,10 @@ export function renderWorkStateLines(entries: WorkStateEntry[], nowEpoch: WorkSt
 }
 
 /**
- * The SessionStart section: the rule, then what is still open, one line per
- * item, cut to `characterLimit`. A list untouched for `staleDays` is one line;
- * one untouched for 90 days is only counted.
+ * The SessionStart section: the rule, the project facts, then what is still
+ * open, one line per item. The rule and open lines are cut to
+ * `characterLimit`, the facts to their own limit. A list untouched for
+ * `staleDays` is one line; one untouched for 90 days is only counted.
  */
 export function buildWorkStateContextSection(
   entries: WorkStateEntry[],
@@ -174,6 +197,7 @@ export function buildWorkStateContextSection(
   const openLines: string[] = [];
   let hiddenLists = 0;
   for (const list of groupWorkStateLists(entries.filter(entry => !isOwnerGoalsList(entry.list_name) && !isMyRulesList(entry.list_name)))) {
+    if (isReservedList(list.entries[0].list_name)) continue;
     const folded = foldWorkStateList(list.entries);
     const lines = renderWorkStateList(list.label, folded, nowEpoch, false, true);
     if (lines.length === 0) continue;
@@ -190,18 +214,33 @@ export function buildWorkStateContextSection(
   if (hiddenLists > 0) {
     openLines.push(`- ...${hiddenLists} list${hiddenLists === 1 ? '' : 's'} untouched for ${WORK_STATE_HIDDEN_DAYS}+ days; read them with work_state_read`);
   }
-  if (openLines.length === 0) {
-    return `${WORK_STATE_RULE}\n\nNothing open yet.`;
-  }
-  return fitWorkStateLines(`${WORK_STATE_RULE}\n\nStill open:`, openLines, characterLimit);
+  const facts = buildFactsSection(entries);
+  const openPart = openLines.length === 0
+    ? 'Nothing open yet.'
+    : fitWorkStateLines('Still open:', openLines, characterLimit - WORK_STATE_RULE.length - 2);
+  return [WORK_STATE_RULE, facts, openPart].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Every `facts` list in `entries` (any case, every project read) as one
+ * `- key: value` line per fact, cut to `characterLimit`; empty with no facts.
+ * Facts are list state only: a task written to the list is not shown here.
+ */
+export function buildFactsSection(entries: WorkStateEntry[], characterLimit: number = FACTS_SECTION_CHARACTER_LIMIT): string {
+  const facts = foldWorkStateList(entries.filter(entry => entry.list_name.toLowerCase() === FACTS_LIST)).state;
+  const lines = Object.entries(facts)
+    .filter(([key, value]) => key !== 'task' && value !== null)
+    .map(([key, value]) => `- ${key}: ${cutValue(value, FACT_VALUE_CHARS)}`);
+  if (lines.length === 0) return '';
+  return fitWorkStateLines('# Project facts (durable)', lines, characterLimit, `work_state_read list=${FACTS_LIST}`);
 }
 
 /** `heading`, then as many of `lines` as fit in `characterLimit`, then how many were left out. */
-export function fitWorkStateLines(heading: string, lines: string[], characterLimit: number): string {
+export function fitWorkStateLines(heading: string, lines: string[], characterLimit: number, readWith: string = 'work_state_read'): string {
   let text = heading;
   for (let index = 0; index < lines.length; index++) {
     const remaining = lines.length - index;
-    const overflowLine = `\n- ...${remaining} more line${remaining === 1 ? '' : 's'}; read them with work_state_read`;
+    const overflowLine = `\n- ...${remaining} more line${remaining === 1 ? '' : 's'}; read them with ${readWith}`;
     const candidate = `${text}\n${lines[index]}`;
     const needsOverflowRoom = index < lines.length - 1;
     if (candidate.length + (needsOverflowRoom ? overflowLine.length : 0) > characterLimit) {
