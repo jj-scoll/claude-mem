@@ -13,7 +13,7 @@ import { projectReadKeys } from '../sqlite/project-read-keys.js';
 import type { ContextInput, ContextConfig, Observation, SessionSummary } from './types.js';
 import { colors } from './types.js';
 import { loadContextConfig } from './ContextConfigLoader.js';
-import { fitContextToBudget, CONTEXT_OUTPUT_LIMIT } from './ContextBudget.js';
+import { fitContextToBudget, SESSION_START_TARGET } from './ContextBudget.js';
 import { calculateTokenEconomics } from './TokenCalculator.js';
 import {
   queryObservationsMulti,
@@ -482,7 +482,7 @@ export function renderContextFromRows(
       buildContextOutput(project, items, summaries, cfg, cwd, input?.session_id, false, headerTime).text,
     input?.full
       ? Number.POSITIVE_INFINITY
-      : CONTEXT_OUTPUT_LIMIT - (input?.reserveChars ?? 0) - headerTimeReserveChars,
+      : SESSION_START_TARGET - (input?.reserveChars ?? 0) - headerTimeReserveChars,
     Boolean(input?.full),
     forHuman ? (items, cfg) =>
       buildContextOutput(project, items, summaries, cfg, cwd, input?.session_id, true, headerTime) : undefined

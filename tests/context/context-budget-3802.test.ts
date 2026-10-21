@@ -3,7 +3,8 @@ import {
   fitContextToBudget,
   CONTEXT_OUTPUT_LIMIT,
 } from '../../src/services/context/ContextBudget.js';
-import { fitContextForDelivery } from '../../src/services/context/ContextBuilder.js';
+import { fitContextForDelivery, renderContextFromRows } from '../../src/services/context/ContextBuilder.js';
+import { ModeManager } from '../../src/services/domain/ModeManager.js';
 import type { Observation, SessionSummary } from '../../src/services/context/types.js';
 import type { ContextConfig } from '../../src/services/context/types.js';
 
@@ -164,6 +165,33 @@ function renderBlock(items: Observation[], config: ContextConfig): string {
   const lastSummary = config.showLastSummary ? 3000 : 0;
   return 'x'.repeat(300 + titles + fulls + sessions + lastSummary + 200);
 }
+
+describe('the SessionStart target', () => {
+  it('fits the rendered body to 8,000 characters minus what the hook appends', () => {
+    const mode = ModeManager.getInstance();
+    const oldMode = Reflect.get(mode, 'activeMode');
+    const oldId = Reflect.get(mode, 'activeModeId');
+    try {
+      mode.loadMode('code');
+      // Sized to fit the old 10,000 - reserve on its first render, with nothing given up.
+      const observations = Array.from({ length: 30 }, (_, i) => ({
+        ...obs(i),
+        project: 'fixture',
+        created_at: new Date((1_700_000_000 + i) * 1000).toISOString(),
+      })) as unknown as Observation[];
+      const reserveChars = 2_049; // the memory instructions the hook appends
+
+      const { text } = renderContextFromRows({ observations, summaries: [] }, { reserveChars }, false,
+        { config: makeConfig({ fullObservationCount: 0, sessionCount: 0, showLastSummary: false }), cwd: '/fixture', project: 'fixture' });
+
+      expect(text).toContain('# [fixture] recent context');
+      expect(text.length + reserveChars).toBeLessThanOrEqual(8_000);
+    } finally {
+      Reflect.set(mode, 'activeMode', oldMode);
+      Reflect.set(mode, 'activeModeId', oldId);
+    }
+  });
+});
 
 describe('what the fitted block delivers (#3811 review)', () => {
   const WARNING = 'W'.repeat(600);

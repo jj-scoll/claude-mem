@@ -24,8 +24,8 @@ const routeScript = `
   ModeManager.getInstance().loadMode('code');
   Date.now = () => 1790000000000;
   const store = new SessionStore(join(directory, 'claude-mem.db'));
-  store.appendWorkStateEntry({ project: 'app', listName: 'next', fields: { status: 'active', next: 'KEEP_RUNTIME_WORK_STATE' }, createdAtEpoch: 1700000000000 });
-  const remoteEntry = store.appendWorkStateEntry({ project: 'app', listName: 'next', fields: { next: 'WRONG_REMOTE_WORK_STATE' }, createdAtEpoch: 1700000000000 });
+  store.appendWorkStateEntry({ project: 'app', listName: 'next', fields: { status: 'active', next: 'KEEP_RUNTIME_WORK_STATE' }, createdAtEpoch: 1789999940000 });
+  const remoteEntry = store.appendWorkStateEntry({ project: 'app', listName: 'next', fields: { next: 'WRONG_REMOTE_WORK_STATE' }, createdAtEpoch: 1789999940000 });
   const remoteStatement = store.db.prepare('UPDATE work_state_entries SET origin_device_id = ?, origin_local_id = ? WHERE id = ?');
   try { remoteStatement.run('device-a', '7', remoteEntry); } finally { remoteStatement.finalize(); }
   store.setLocalSyncDeviceId('device-z');

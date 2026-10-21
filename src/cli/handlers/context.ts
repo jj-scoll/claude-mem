@@ -34,7 +34,7 @@ import type { ContextInput } from '../../services/context/types.js';
 import { serverSessionStartBudgetMs } from '../../shared/host-hook-limits.js';
 import { contextCacheKeys, fillContextPlaceholders, readContextCache } from '../../shared/context-cache.js';
 import { clearTimelinePending } from '../../shared/codex-compaction-gate.js';
-import { CONTEXT_OUTPUT_LIMIT } from '../../services/context/ContextBudget.js';
+import { CONTEXT_OUTPUT_LIMIT, SESSION_START_HARD_LIMIT } from '../../services/context/ContextBudget.js';
 import {
   fetchTeamBrief,
   formatTeamBrief,
@@ -88,6 +88,57 @@ export function fitTeamBriefSection(section: string, otherChars: number, limit: 
   if (notice) return notice;
   logger.warn('HOOK', 'TeamBrain brief left out: the SessionStart block has no room left even for a notice', { room, limit });
   return '';
+}
+
+/** What the host is handed for a block, measured the strictest way: its JSON-encoded UTF-8 bytes. */
+function deliveredBytes(text: string): number {
+  return Buffer.byteLength(JSON.stringify(text), 'utf8');
+}
+
+const BODY_CUT_MARKER = '[claude-mem] Older context left out to fit the SessionStart limit; search memory for it.';
+
+/**
+ * The last check before the block leaves the hook. The body was fitted to the
+ * SessionStart target with room for what is appended here, so this only cuts
+ * what was not reserved: a body cached before an upgrade, an outsized notice.
+ * It gives up the brief first, then the body's tail (its oldest lines), then
+ * the notices. The body's first line and the memory instructions always stay.
+ */
+export function fitSessionStartBlock(
+  parts: { notices: string[]; body: string; team: string; instructions: string },
+  limit: number = SESSION_START_HARD_LIMIT,
+): string {
+  const join = (notices: string[], body: string, team: string) =>
+    [...notices, body, team, parts.instructions].filter(Boolean).join('\n\n');
+  const fits = (text: string) => deliveredBytes(text) <= limit;
+  /** The block with the body cut at a line boundary to fit, or null when even its first line does not. */
+  const withBodyCut = (notices: string[]): string | null => {
+    const lines = parts.body.split('\n');
+    for (let keep = lines.length - 1; keep >= 1; keep--) {
+      const text = join(notices, `${lines.slice(0, keep).join('\n')}\n${BODY_CUT_MARKER}`, '');
+      if (fits(text)) return text;
+    }
+    return null;
+  };
+
+  const full = join(parts.notices, parts.body, parts.team);
+  if (fits(full)) return full;
+  const candidates = [
+    () => join(parts.notices, parts.body, ''),
+    () => withBodyCut(parts.notices),
+    () => join([], parts.body, ''),
+    () => withBodyCut([]),
+  ];
+  for (const candidate of candidates) {
+    const text = candidate();
+    if (text !== null && fits(text)) {
+      logger.warn('HOOK', 'SessionStart block cut to fit the host limit', { fromBytes: deliveredBytes(full), toBytes: deliveredBytes(text), limit });
+      return text;
+    }
+  }
+  const smallest = join([], parts.body.split('\n')[0], '');
+  logger.warn('HOOK', 'SessionStart block is over the host limit even cut to its first line', { bytes: deliveredBytes(smallest), limit });
+  return smallest;
 }
 
 // Plan-24 step 4 (#2991): in server runtime every write goes to the shared
@@ -318,15 +369,14 @@ export const contextHandler: EventHandler = {
       || fallbackSetting === 'claude' || fallbackSetting === ''
       || (gatewayRole === 'primary' && Boolean(settings.CLAUDE_MEM_PRO_FALLBACK_AT));
     const staleReason = usesClaudeCredentials ? readStaleMarker() : null;
+    // Lines for this session only, shown before the body, the fallback notice first.
+    const notices: string[] = [];
     if (staleReason) {
       // The observer authenticates with the Claude Code CLI credentials
       // (keychain service "Claude Code-credentials", see oauth-token.ts), not
       // Claude Desktop. Point the remedy at the CLI so the user runs the right
       // login (#4150).
-      const hint = `[claude-mem] Claude Code OAuth token is stale: ${staleReason}\nRun /login in Claude Code (or \`claude auth login\` in a terminal) to refresh it.`;
-      additionalContext = additionalContext
-        ? `${hint}\n\n${additionalContext}`
-        : hint;
+      notices.unshift(`[claude-mem] Claude Code OAuth token is stale: ${staleReason}\nRun /login in Claude Code (or \`claude auth login\` in a terminal) to refresh it.`);
     }
 
     // Trial-expiry fallback notice (plan 2026-08-26 Phase 6): the worker wrote
@@ -344,14 +394,11 @@ export const contextHandler: EventHandler = {
     // without this the user would never learn why the fallback stopped.
     const fallbackActive = settings.CLAUDE_MEM_PRO_FALLBACK_AT !== '' && gatewayRole !== null;
     if (fallbackActive && !hasShownProFallbackNotice()) {
-      const fallbackNotice = proFallbackNotice({
+      notices.unshift(proFallbackNotice({
         message: settings.CLAUDE_MEM_PRO_FALLBACK_MESSAGE,
         action: settings.CLAUDE_MEM_PRO_FALLBACK_ACTION,
         url: settings.CLAUDE_MEM_PRO_FALLBACK_URL,
-      }, gatewayRole);
-      additionalContext = additionalContext
-        ? `${fallbackNotice}\n\n${additionalContext}`
-        : fallbackNotice;
+      }, gatewayRole));
       markProFallbackNoticeShown();
     }
 
@@ -373,10 +420,11 @@ export const contextHandler: EventHandler = {
     const teamSection = teamBriefRequest
       ? fitTeamBriefSection(
           teamBriefSection(await teamBriefRequest),
-          [additionalContext, memoryInstructions].filter(Boolean).join('\n\n').length,
+          [...notices, additionalContext, memoryInstructions].filter(Boolean).join('\n\n').length,
+          SESSION_START_HARD_LIMIT,
         )
       : '';
-    additionalContext = [additionalContext, teamSection, memoryInstructions].filter(Boolean).join('\n\n');
+    additionalContext = fitSessionStartBlock({ notices, body: additionalContext, team: teamSection, instructions: memoryInstructions });
 
     // Antigravity CLI (like the former Gemini CLI) is hooks-based, not an
     // MCP-context-fetch platform like Codex — colorApiPath never populates
