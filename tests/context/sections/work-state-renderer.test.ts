@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'bun:test';
-import type { WorkStateEntry, WorkStateFields } from '../../../src/services/sqlite/work-state.js';
+import { USER_SCOPE_PROJECT, type WorkStateEntry, type WorkStateFields } from '../../../src/services/sqlite/work-state.js';
 import {
   buildFactsSection,
+  buildUserFactsSection,
   buildWorkStateContextSection,
   foldWorkStateList,
   renderWorkStateLines,
@@ -266,5 +267,46 @@ describe('facts list', () => {
 
     expect(section).not.toContain('handoff');
     expect(section).not.toContain('Goal: ship');
+  });
+});
+
+describe('user facts', () => {
+  function userFact(fields: WorkStateFields, ageMs: number): WorkStateEntry {
+    return { ...entry('user-facts', fields, ageMs), project: USER_SCOPE_PROJECT };
+  }
+
+  it('tells the agent where facts for every project go', () => {
+    expect(WORK_STATE_RULE).toContain('"user-facts"');
+  });
+
+  it('puts user facts before project facts, never as an open list', () => {
+    const entries = [
+      ...releaseEntries(),
+      entry('facts', { units: 'wtok' }, MINUTE_MS),
+      userFact({ 'answer-style': 'lead with the number' }, MINUTE_MS),
+    ];
+
+    const section = buildWorkStateContextSection(entries, NOW_EPOCH);
+
+    expect(section).toStartWith(`${WORK_STATE_RULE}\n\n# Facts (all projects)\n- answer-style: lead with the number\n\n# Project facts (durable)\n- units: wtok\n\nStill open:\n- release:`);
+    expect(section).not.toContain('- user-facts');
+  });
+
+  it('shows a project fact instead of the user fact with the same key', () => {
+    const entries = [userFact({ units: 'user value', style: 'terse' }, 2 * MINUTE_MS), entry('facts', { units: 'project value' }, MINUTE_MS)];
+
+    expect(buildUserFactsSection(entries)).toBe('# Facts (all projects)\n- style: terse');
+    expect(buildWorkStateContextSection(entries, NOW_EPOCH)).not.toContain('user value');
+  });
+
+  it('cuts user facts to 800 characters, pointing at the user-facts list', () => {
+    const facts = buildUserFactsSection(Array.from({ length: 6 }, (_, index) => userFact({ [`fact-${index}`]: 'v'.repeat(200) }, MINUTE_MS)));
+
+    expect(facts.length).toBeLessThanOrEqual(800);
+    expect(facts).toMatch(/\n- \.\.\.\d+ more lines?; read them with work_state_read list=user-facts$/);
+  });
+
+  it('renders nothing without user facts', () => {
+    expect(buildUserFactsSection(releaseEntries())).toBe('');
   });
 });

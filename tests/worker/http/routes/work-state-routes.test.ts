@@ -19,6 +19,7 @@ import { getProjectContext } from '../../../../src/utils/project-name.js';
 import { SearchRoutes } from '../../../../src/services/worker/http/routes/SearchRoutes.js';
 import { ModeManager } from '../../../../src/services/domain/ModeManager.js';
 import { logger } from '../../../../src/utils/logger.js';
+import { onContextInvalidation } from '../../../../src/shared/context-invalidation.js';
 
 let server: Server | undefined;
 let port = 0;
@@ -247,6 +248,44 @@ describe('WorkStateRoutes', () => {
   });
 });
 
+
+describe('user facts', () => {
+  let otherCheckout: string;
+  beforeEach(() => { otherCheckout = mkdtempSync(join(tmpdir(), 'work-state-other-')); });
+  afterEach(() => rmSync(otherCheckout, { recursive: true, force: true }));
+
+  it('saves user facts for every project, and every checkout reads them', async () => {
+    const response = await write({ cwd: checkout, list: 'user-facts', fields: { 'answer-style': 'lead with the number' } });
+
+    expect(await response.text()).toStartWith('Saved to "user-facts" in all projects.');
+    expect(store.getWorkStateEntries([project])).toEqual([]);
+    const elsewhere = await (await read({ cwd: otherCheckout, list: 'user-facts' })).text();
+    expect(elsewhere).toBe('- user-facts: answer-style=lead with the number, updated 1 minute ago');
+    expect(await (await read({ cwd: otherCheckout })).text()).toContain('- user-facts: answer-style=lead with the number');
+    const context = await (await fetch(`http://127.0.0.1:${port}/api/context/inject?${new URLSearchParams({ projects: getProjectContext(otherCheckout).primary })}`)).text();
+    expect(context).toContain('# Facts (all projects)\n- answer-style: lead with the number');
+  });
+
+  it('refreshes every cached context block when a user fact changes', async () => {
+    const scopes: unknown[] = [];
+    const unsubscribe = onContextInvalidation(invalidation => scopes.push(invalidation.scope));
+    try {
+      await write({ cwd: checkout, list: 'user-facts', fields: { units: 'wtok' } });
+      await write({ cwd: checkout, list: 'release', fields: { version: '1' } });
+    } finally {
+      unsubscribe();
+    }
+    expect(scopes).toEqual(['all', { projects: [project] }]);
+  });
+
+  it('does not save user facts from a project the user excluded', async () => {
+    process.env.CLAUDE_MEM_EXCLUDED_PROJECTS = basename(checkout);
+
+    await write({ cwd: checkout, list: 'user-facts', fields: { units: 'wtok' } });
+
+    expect(await (await read({ cwd: otherCheckout, list: 'user-facts' })).text()).toStartWith('Nothing open in "user-facts"');
+  });
+});
 
 describe('literal primitive field keys', () => {
   it('continues to reject object values, arrays and empty keys', async () => {
