@@ -290,6 +290,10 @@ describe('#4689 — credential identity is unaffected by the transcript-only dir
   });
 
   it('env-fallback still wins when the default keychain entry is missing (the #4689 reporter scenario)', async () => {
+    // A keychain miss on darwin falls through to ${configDir}/.credentials.json, and a
+    // valid stored login outranks the env token (#3121). paths.CLAUDE_CONFIG_DIR may be
+    // frozen to the real ~/.claude by an earlier test file, so probe the machine first.
+    const storedProbe = await probeStoredCredential();
     setPlatform('darwin');
     stubSettingsFile({ CLAUDE_MEM_CLAUDE_CONFIG_DIR: '', CLAUDE_MEM_OBSERVER_CLAUDE_CONFIG_DIR: TRANSCRIPT_DIR });
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat01-4689-env-fallback';
@@ -302,8 +306,13 @@ describe('#4689 — credential identity is unaffected by the transcript-only dir
 
     expect(result.kind).toBe('present');
     if (result.kind === 'present') {
-      expect(result.source).toBe('env-fallback');
-      expect(result.token).toBe('sk-ant-oat01-4689-env-fallback');
+      if (storedProbe.kind === 'present') {
+        expect(result.source).toBe('credentials-file');
+        expect(result.token).toBe(storedProbe.token);
+      } else {
+        expect(result.source).toBe('env-fallback');
+        expect(result.token).toBe('sk-ant-oat01-4689-env-fallback');
+      }
     }
   });
 });

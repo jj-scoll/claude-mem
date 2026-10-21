@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import express from 'express';
 import {
+  MAX_HANDOFF_FIELDS_JSON_CHARS,
   MAX_WORK_STATE_FIELDS_JSON_CHARS,
   WorkStateRoutes,
 } from '../../../../src/services/worker/http/routes/WorkStateRoutes.js';
@@ -288,5 +289,43 @@ describe('WorkStateRoutes cloud sync', () => {
     expect(response.status).toBe(400);
     expect(store.getWorkStateEntries([project])).toEqual([]);
     expect((await write({ cwd: checkout, list: 'release', fields: { ratio: 0.5, count: 9007199254740991 } })).status).toBe(200);
+  });
+});
+
+describe('POST /api/handoff/claim', () => {
+  function claim(body: Record<string, unknown>): Promise<Response> {
+    return fetch(`http://127.0.0.1:${port}/api/handoff/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("answers with the checkout's handoff section once, then with 204", async () => {
+    store.appendWorkStateEntry({ project, listName: 'handoff', fields: { text: 'Goal: ship 15.0.2', obs_ids: '101364' } });
+
+    const response = await claim({ cwd: checkout, source: 'clear' });
+
+    expect(response.status).toBe(200);
+    const section = await response.text();
+    expect(section).toStartWith('# Handoff from a previous session (written ');
+    expect(section).toContain('\nGoal: ship 15.0.2\nDetails: get_observations ids 101364; full text in HANDOFF.md');
+    expect(cloudSyncNotifyCalls).toBe(1);
+    expect((await claim({ cwd: checkout, source: 'startup' })).status).toBe(204);
+  });
+
+  it('stores a handoff up to its own size limit, which never shows in the work-state section', async () => {
+    const response = await write({ cwd: checkout, list: 'handoff', fields: { text: `Goal: ship\n${'x'.repeat(3_000)}`, obs_ids: '101364' } });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(`Saved the handoff in ${project}. The next session here is shown it once.`);
+    expect((await write({ cwd: checkout, list: 'handoff', fields: { text: 'x'.repeat(MAX_HANDOFF_FIELDS_JSON_CHARS) } })).status).toBe(400);
+    expect((await write({ cwd: checkout, list: 'release', fields: { note: 'x'.repeat(3_000) } })).status).toBe(400);
+  });
+
+  it('answers 204 when there is no handoff, and requires a cwd', async () => {
+    expect((await claim({ cwd: checkout })).status).toBe(204);
+    expect((await claim({ source: 'clear' })).status).toBe(400);
+    expect(cloudSyncNotifyCalls).toBe(0);
   });
 });

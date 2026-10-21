@@ -41,6 +41,7 @@ import {
 import {
   createWorkStateSchema,
   appendWorkStateEntry as appendWorkStateEntryRow,
+  findClaimableHandoff,
   getWorkStateEntries as getWorkStateEntriesRows,
   scopeWorkStateEntries,
   type WorkStateEntry,
@@ -3219,6 +3220,28 @@ export class SessionStore {
       getWorkStateEntriesRows(this.db, this.getProjectReadKeys(projects), listName, this.localSyncDeviceId),
       projects,
     );
+  }
+
+  /**
+   * The handoff a session starting from `source` is shown (findClaimableHandoff),
+   * consumed in the same transaction so no later session repeats it. The
+   * consuming entry goes under the handoff's own project key, which every
+   * checkout that reads the handoff also reads. The handoff list never renders
+   * in the context body, so this write leaves the context cache alone.
+   */
+  claimHandoff(projects: string[], source: string | undefined, nowEpoch: number, maxAgeMs: number): WorkStateEntry | null {
+    return this.db.transaction(() => {
+      const handoff = findClaimableHandoff(this.getWorkStateEntries(projects), source, nowEpoch, maxAgeMs);
+      if (!handoff) return null;
+      appendWorkStateEntryRow(this.db, {
+        project: handoff.project,
+        listName: handoff.list_name,
+        fields: { consumed_at: nowEpoch, consumed_by: source ?? 'unknown' },
+        // After the handoff in write order even when the device that wrote it ran ahead of this clock.
+        createdAtEpoch: Math.max(nowEpoch, handoff.created_at_epoch + 1),
+      });
+      return handoff;
+    }).immediate();
   }
 
   countToolUses(filters: ToolUseQueryFilters = {}): Array<{ tool_name: string; uses: number }> {

@@ -884,6 +884,8 @@ var SettingsDefaultsManager = class {
     CLAUDE_MEM_WELCOME_HINT_ENABLED: "true",
     CLAUDE_MEM_WORK_STATE_ENABLED: "true",
     // 'false' = no work-state section at SessionStart and no work_state_* MCP tools, for hosts that track work their own way
+    CLAUDE_MEM_HANDOFF_MAX_AGE_HOURS: "168",
+    // A handoff in work-state list "handoff" older than this is not shown at SessionStart
     CLAUDE_MEM_FILE_READ_GATE_ENABLED: "true",
     // 'false' = never block a full-file Read; the file's observation timeline is still added as context
     CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: "false",
@@ -902,6 +904,10 @@ var SettingsDefaultsManager = class {
     // Retire an observer conversation past this size and start a fresh generation (#3800)
     CLAUDE_MEM_OBSERVER_THINKING: "disabled",
     // Observer thinking param: 'disabled' (shipped) | 'adaptive' | 'enabled[:budget]' | 'omit' — an always-thinking gateway upstream rejects 'disabled' with 400/1210 (#4732)
+    CLAUDE_MEM_OBSERVER_EFFORT: "low",
+    // One-shot observer prompts (field condense, wrap-up) run at this effort; Haiku 5.5 always thinks adaptively, so effort is the lever
+    CLAUDE_MEM_OBSERVER_CACHE_TTL: "5m",
+    // One-shot prompts are never read back from cache, so skip the 2x-priced 1h write (CLAUDE_CODE_PROMPT_CACHE_TTL)
     CLAUDE_MEM_OBSERVER_CONTEXT_WINDOW: "",
     // Observer model context window in tokens; '' = resolve it (OpenRouter catalogue, Gemini/Claude maps). Lowers the budget above to half the window (#3625)
     CLAUDE_MEM_OBSERVER_MAX_OUTPUT_TOKENS: "4096",

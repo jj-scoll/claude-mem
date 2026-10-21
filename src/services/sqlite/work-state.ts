@@ -26,6 +26,38 @@ export interface WorkStateEntry {
   created_at_epoch: number;
 }
 
+/** Reserved list the claude-mem:handoff skill leaves the next session's handoff in. */
+export const HANDOFF_LIST = 'handoff';
+
+/** A compact shows only a handoff this new: one written just before the compaction. */
+export const HANDOFF_COMPACT_MAX_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * The handoff a session starting from `source` is shown, if any: the newest
+ * `handoff` entry that sets `text`, when that text is not empty, no later
+ * entry consumed it, and it is at most `maxAgeMs` old (30 minutes on compact).
+ * A resumed session keeps its own conversation and is shown none.
+ */
+export function findClaimableHandoff(
+  entries: WorkStateEntry[],
+  source: string | undefined,
+  nowEpoch: number,
+  maxAgeMs: number,
+): WorkStateEntry | null {
+  if (source === 'resume') return null;
+  const handoffEntries = entries.filter(entry => entry.list_name.toLowerCase() === HANDOFF_LIST);
+  let textIndex = handoffEntries.length - 1;
+  while (textIndex >= 0 && handoffEntries[textIndex].fields.text === undefined) textIndex--;
+  if (textIndex < 0) return null;
+  const handoff = handoffEntries[textIndex];
+  if (typeof handoff.fields.text !== 'string' || handoff.fields.text.trim() === '') return null;
+  const consumed = handoffEntries.slice(textIndex + 1)
+    .some(entry => entry.fields.consumed_at !== undefined && entry.fields.consumed_at !== null);
+  if (consumed) return null;
+  const windowMs = source === 'compact' ? Math.min(maxAgeMs, HANDOFF_COMPACT_MAX_AGE_MS) : maxAgeMs;
+  return nowEpoch - handoff.created_at_epoch <= windowMs ? handoff : null;
+}
+
 /** Explicit checkout aliases share a history; adopted projects retain their own scope. */
 export function scopeWorkStateEntries(entries: WorkStateEntry[], projects: string[]): WorkStateEntry[] {
   const foldKey = (key: string) => key.replace(/[A-Z]/g, character => character.toLowerCase());

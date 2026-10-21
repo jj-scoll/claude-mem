@@ -30,6 +30,8 @@ let openRouterBaseUrl = '';
 let staleReason: string | null = null;
 let memoryInstructions: string | undefined = 'false';
 let workerBody = 'context from worker';
+/** What POST /api/handoff/claim answers: a section, undefined for 204, or 'throw' for a timeout. */
+let handoffClaim: string | undefined = undefined;
 const outageNoticeRequests: Array<string | undefined> = [];
 
 mock.module('../../../src/shared/hook-settings.js', () => ({
@@ -64,6 +66,10 @@ mock.module('../../../src/shared/worker-utils.js', () => ({
       if (projectCatalog === 'reject') throw new Error('catalog unavailable');
       return { projects: projectCatalog };
     }
+    if (args[0] === '/api/handoff/claim') {
+      if (handoffClaim === 'throw') throw new Error('The operation timed out.');
+      return handoffClaim;
+    }
     return workerBody;
   },
   getWorkerPort: () => 37777,
@@ -89,6 +95,7 @@ beforeEach(() => {
   staleReason = null;
   memoryInstructions = 'false';
   workerBody = 'context from worker';
+  handoffClaim = undefined;
 });
 
 describe('SessionStart block size', () => {
@@ -137,6 +144,68 @@ describe('SessionStart block size', () => {
     const result = await contextHandler.execute({ sessionId: 'size-guard-fits', cwd: '/tmp/repo', platform: 'claude-code' });
 
     expect(result.hookSpecificOutput?.additionalContext).toBe(workerBody);
+  });
+
+  it('keeps a whole handoff, the body header and the instructions within 9,000 bytes by cutting the timeline tail', async () => {
+    memoryInstructions = undefined;
+    workerBody = bodyOfChars(7_900);
+    handoffClaim = `# Handoff from a previous session (written 5 minutes ago, shown once)\n${'h'.repeat(3_300)}\nDetails: full text in HANDOFF.md`;
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'size-guard-handoff', cwd: '/tmp/repo', platform: 'claude-code', sessionSource: 'clear' });
+    const block = result.hookSpecificOutput?.additionalContext;
+
+    expect(jsonBytes(block)).toBeLessThanOrEqual(9_000);
+    expect(block).toStartWith(`${handoffClaim}\n\n${HEADER}\n100000 8:28p ●`);
+    expect(block).toContain('save_memory tool is available');
+  });
+});
+
+describe('SessionStart handoff', () => {
+  const HANDOFF = '# Handoff from a previous session (written 5 minutes ago, shown once)\nGoal: ship\nDetails: full text in HANDOFF.md';
+
+  it('claims the handoff once the body is in hand and starts the block with it', async () => {
+    handoffClaim = HANDOFF;
+    calls.length = 0;
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'handoff', cwd: '/tmp/repo', platform: 'claude-code', sessionSource: 'clear' });
+
+    expect(result.hookSpecificOutput?.additionalContext).toBe(`${HANDOFF}\n\ncontext from worker`);
+    expect(calls.at(-1)).toEqual(['/api/handoff/claim', 'POST', { cwd: '/tmp/repo', source: 'clear' }, { timeoutMs: 2_000 }]);
+  });
+
+  it('ignores what a worker without the claim route answers', async () => {
+    // Express's 404 page, which the worker call hands back for a 4xx.
+    handoffClaim = '<!DOCTYPE html>\n<html lang="en">\n<body>\n<pre>Cannot POST /api/handoff/claim</pre>\n</body>\n</html>';
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'handoff-old-worker', cwd: '/tmp/repo', platform: 'claude-code', sessionSource: 'clear' });
+
+    expect(result.hookSpecificOutput?.additionalContext).toBe('context from worker');
+  });
+
+  it('goes on without a handoff when the claim times out', async () => {
+    handoffClaim = 'throw';
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'handoff-timeout', cwd: '/tmp/repo', platform: 'claude-code', sessionSource: 'startup' });
+
+    expect(result.hookSpecificOutput?.additionalContext).toBe('context from worker');
+  });
+
+  it('does not claim when the body could not be read, so the handoff waits for a session that can show it', async () => {
+    handoffClaim = HANDOFF;
+    workerUnreachable = true;
+    calls.length = 0;
+    try {
+      const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+      await contextHandler.execute({ sessionId: 'handoff-outage', cwd: '/tmp/repo', platform: 'claude-code', sessionSource: 'clear' });
+
+      expect(calls.some(call => call[0] === '/api/handoff/claim')).toBe(false);
+    } finally {
+      workerUnreachable = false;
+    }
   });
 });
 
@@ -277,6 +346,7 @@ describe('contextHandler SessionStart path', () => {
         expect(calls.map(call => call[0])).toEqual([
           '/api/context/inject?projects=parent-project%2Crepo-project&platformSource=claude&cwd=%2Ftmp%2Frepo',
           '/api/context/inject?projects=parent-project%2Crepo-project&platformSource=claude&cwd=%2Ftmp%2Frepo&colors=true',
+          '/api/handoff/claim',
         ]);
       } finally {
         showTerminalOutput = false;
@@ -397,12 +467,15 @@ describe('contextHandler SessionStart path', () => {
       platform: 'claude-code',
     });
 
-    expect(calls).toEqual([[
-      '/api/context/inject?projects=parent-project%2Crepo-project&platformSource=claude&cwd=%2Ftmp%2Frepo',
-      'GET',
-      undefined,
-      undefined,
-    ]]);
+    expect(calls).toEqual([
+      [
+        '/api/context/inject?projects=parent-project%2Crepo-project&platformSource=claude&cwd=%2Ftmp%2Frepo',
+        'GET',
+        undefined,
+        undefined,
+      ],
+      ['/api/handoff/claim', 'POST', { cwd: '/tmp/repo' }, { timeoutMs: 2_000 }],
+    ]);
   });
 
   it('includes every source in both Claude startup renders when opted in', async () => {
@@ -422,6 +495,7 @@ describe('contextHandler SessionStart path', () => {
       expect(calls.map(call => call[0])).toEqual([
         '/api/context/inject?projects=parent-project%2Crepo-project&cwd=%2Ftmp%2Frepo',
         '/api/context/inject?projects=parent-project%2Crepo-project&cwd=%2Ftmp%2Frepo&colors=true',
+        '/api/handoff/claim',
       ]);
     } finally {
       includeAllSources = false;

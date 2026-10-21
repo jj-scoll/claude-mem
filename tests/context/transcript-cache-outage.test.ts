@@ -89,7 +89,8 @@ describe('prior transcript outages fall back to the cached memory, which never c
   });
   it('keeps the ordinary shared cache fast path when prior messages are disabled', () => {
     const result = run('default-outage');
-    expect(result.healthCalls).toBe(0);
+    // The handoff claim is the one worker request; the cached block needs no context fetch.
+    expect(result.healthCalls).toBe(1);
     expect(result.result.hookSpecificOutput.additionalContext).toBe(`SHARED MEMORY\n\n${MEMORY_PLUGIN_INSTRUCTIONS}`);
   });
   it('warms one transcript-free variant through the real worker and uses it after shutdown', () => {
