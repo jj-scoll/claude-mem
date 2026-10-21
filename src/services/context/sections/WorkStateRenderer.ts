@@ -1,4 +1,4 @@
-import { HANDOFF_LIST, type WorkStateEntry, type WorkStateFields, type WorkStateValue } from '../../sqlite/work-state.js';
+import { findLatestHandoff, HANDOFF_LIST, type WorkStateEntry, type WorkStateFields, type WorkStateValue } from '../../sqlite/work-state.js';
 import { describeDuration } from '../../../shared/observer-health.js';
 import { relativeTimePlaceholder } from '../../../shared/context-cache.js';
 import { isOwnerGoalsList } from '../../work-view/owner-goals.mjs';
@@ -259,6 +259,21 @@ export function buildHandoffSection(handoff: WorkStateEntry, nowEpoch: number): 
   // A first line longer than the room is cut inside the line.
   if (!kept) kept = `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
   return [heading, kept, cutDetails].join('\n');
+}
+
+/**
+ * The handoff as one line for a read of every list: its age and whether a
+ * session was shown it, not its text. Empty when `entries` hold no handoff.
+ */
+export function buildHandoffSummaryLine(entries: WorkStateEntry[], nowEpoch: number): string {
+  const latest = findLatestHandoff(entries);
+  if (!latest) return '';
+  const written = describeDuration(Math.max(0, nowEpoch - latest.entry.created_at_epoch));
+  return `- ${HANDOFF_LIST}: written ${written} ago, ${latest.consumed ? 'shown once already' : 'not shown yet'}; read it with work_state_read list=${HANDOFF_LIST}`;
+}
+
+export function isHandoffEntry(entry: WorkStateEntry): boolean {
+  return entry.list_name.toLowerCase() === HANDOFF_LIST;
 }
 
 /** `heading`, then as many of `lines` as fit in `characterLimit`, then how many were left out. */

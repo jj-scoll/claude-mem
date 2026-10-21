@@ -45,17 +45,23 @@ export function findClaimableHandoff(
   maxAgeMs: number,
 ): WorkStateEntry | null {
   if (source === 'resume') return null;
+  const latest = findLatestHandoff(entries);
+  if (!latest || latest.consumed) return null;
+  const handoff = latest.entry;
+  if (typeof handoff.fields.text !== 'string' || handoff.fields.text.trim() === '') return null;
+  const windowMs = source === 'compact' ? Math.min(maxAgeMs, HANDOFF_COMPACT_MAX_AGE_MS) : maxAgeMs;
+  return nowEpoch - handoff.created_at_epoch <= windowMs ? handoff : null;
+}
+
+/** The newest `handoff` entry that sets `text`, and whether a later entry consumed it. */
+export function findLatestHandoff(entries: WorkStateEntry[]): { entry: WorkStateEntry; consumed: boolean } | null {
   const handoffEntries = entries.filter(entry => entry.list_name.toLowerCase() === HANDOFF_LIST);
   let textIndex = handoffEntries.length - 1;
   while (textIndex >= 0 && handoffEntries[textIndex].fields.text === undefined) textIndex--;
   if (textIndex < 0) return null;
-  const handoff = handoffEntries[textIndex];
-  if (typeof handoff.fields.text !== 'string' || handoff.fields.text.trim() === '') return null;
   const consumed = handoffEntries.slice(textIndex + 1)
     .some(entry => entry.fields.consumed_at !== undefined && entry.fields.consumed_at !== null);
-  if (consumed) return null;
-  const windowMs = source === 'compact' ? Math.min(maxAgeMs, HANDOFF_COMPACT_MAX_AGE_MS) : maxAgeMs;
-  return nowEpoch - handoff.created_at_epoch <= windowMs ? handoff : null;
+  return { entry: handoffEntries[textIndex], consumed };
 }
 
 /** Explicit checkout aliases share a history; adopted projects retain their own scope. */
