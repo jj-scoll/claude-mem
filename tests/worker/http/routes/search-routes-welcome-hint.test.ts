@@ -457,7 +457,8 @@ describe('SearchRoutes Welcome Hint', () => {
       const placeholderSectionLength = buildWorkStateContextSection(renderedEntries, 'placeholders').length;
       const filledSectionLength = body.length - '\n\nCONTEXT_FROM_GENERATOR'.length;
       expect(placeholderSectionLength).toBeGreaterThanOrEqual(filledSectionLength);
-      expect(generateContextStub).toHaveBeenCalledWith(expect.objectContaining({ reserveChars: placeholderSectionLength + 2 }), false, expect.objectContaining({ execution: 'inline' }));
+      // Plus the memory instructions the hook appends, team or not.
+      expect(generateContextStub).toHaveBeenCalledWith(expect.objectContaining({ reserveChars: placeholderSectionLength + 2 + MEMORY_PLUGIN_INSTRUCTIONS.length + 2 }), false, expect.objectContaining({ execution: 'inline' }));
     });
 
     it('leads the welcome hint with what is still open', async () => {
@@ -490,7 +491,7 @@ describe('SearchRoutes Welcome Hint', () => {
 
       expect(workStateEntriesStub).not.toHaveBeenCalled();
       expect(res.send).toHaveBeenCalledWith('CONTEXT_FROM_GENERATOR');
-      expect(generateContextStub).toHaveBeenCalledWith(expect.objectContaining({ reserveChars: 0 }), false, expect.objectContaining({ execution: 'inline' }));
+      expect(generateContextStub).toHaveBeenCalledWith(expect.objectContaining({ reserveChars: MEMORY_PLUGIN_INSTRUCTIONS.length + 2 }), false, expect.objectContaining({ execution: 'inline' }));
     });
 
     it('leaves room for the TeamBrain brief and the memory instructions the hook appends once the install is in a team', async () => {
@@ -549,7 +550,7 @@ describe('SearchRoutes Welcome Hint', () => {
 
       expect(workStateEntriesStub).not.toHaveBeenCalled();
       expect(res.send).toHaveBeenCalledWith('CONTEXT_FROM_GENERATOR');
-      expect(generateContextStub).toHaveBeenCalledWith(expect.objectContaining({ reserveChars: 0 }), true, expect.objectContaining({ execution: 'inline' }));
+      expect(generateContextStub).toHaveBeenCalledWith(expect.objectContaining({ reserveChars: MEMORY_PLUGIN_INSTRUCTIONS.length + 2 }), true, expect.objectContaining({ execution: 'inline' }));
     });
   });
 

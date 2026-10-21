@@ -18,6 +18,20 @@ export const CONTEXT_OUTPUT_LIMIT = 10_000;
 export const TERMINAL_BANNER_RESERVE_CHARS = 512;
 
 /**
+ * What SessionStart aims for, well inside the host limit: the body is fitted to
+ * this minus everything the hook appends after it (ContextInput.reserveChars).
+ * The margin absorbs what characters cannot see: the hook's JSON escaping and
+ * multi-byte glyphs, which the host may count.
+ */
+export const SESSION_START_TARGET = 8_000;
+
+/**
+ * The hook's last check, in JSON-encoded UTF-8 bytes of the delivered block
+ * (the strictest reading of the host limit): anything over is cut there.
+ */
+export const SESSION_START_HARD_LIMIT = 9_000;
+
+/**
  * Item counts cannot keep the block under that limit, because items are not a
  * fixed size: an observation title runs ~150-320 characters, a session-summary
  * line ~250-600, and the last-session summary block 1-5K on its own. Any count

@@ -209,8 +209,10 @@ describe('WorkStateRoutes', () => {
     const entries = store.getWorkStateEntries([project]);
     const context = buildWorkStateContextSection(entries, Date.now());
     const response = await (await read({ cwd: checkout, list: 'release' })).text();
+    // The SessionStart section leaves details out; the read keeps them.
+    expect(context).toContain('[todo] ship, updated');
+    expect(response).toContain('[todo] ship (owner=active)');
     for (const text of [context, response]) {
-      expect(text).toContain('[todo] ship (owner=active)');
       expect(text).toContain('[doing] pack');
       expect(text).not.toContain('[done] ship');
       expect(text).toContain(`release [${project}]`);

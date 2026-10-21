@@ -29,6 +29,7 @@ let proFallbackAt = '';
 let openRouterBaseUrl = '';
 let staleReason: string | null = null;
 let memoryInstructions: string | undefined = 'false';
+let workerBody = 'context from worker';
 const outageNoticeRequests: Array<string | undefined> = [];
 
 mock.module('../../../src/shared/hook-settings.js', () => ({
@@ -63,7 +64,7 @@ mock.module('../../../src/shared/worker-utils.js', () => ({
       if (projectCatalog === 'reject') throw new Error('catalog unavailable');
       return { projects: projectCatalog };
     }
-    return 'context from worker';
+    return workerBody;
   },
   getWorkerPort: () => 37777,
   isWorkerFallback: () => workerUnreachable,
@@ -87,6 +88,56 @@ beforeEach(() => {
   openRouterBaseUrl = '';
   staleReason = null;
   memoryInstructions = 'false';
+  workerBody = 'context from worker';
+});
+
+describe('SessionStart block size', () => {
+  const HEADER = '# [repo-project] recent context, 2026-10-20 8:43pm EDT';
+  // Timeline-shaped lines with a 3-byte glyph each, so bytes run ahead of characters.
+  const bodyOfChars = (chars: number) => {
+    const lines = [HEADER];
+    for (let id = 100_000; lines.join('\n').length < chars; id++) lines.push(`${id} 8:28p ● ${'t'.repeat(60)}`);
+    return lines.join('\n').slice(0, chars);
+  };
+  const jsonBytes = (text: string | undefined) => Buffer.byteLength(JSON.stringify(text ?? ''), 'utf8');
+
+  it('keeps the block within 9,000 JSON-encoded bytes by cutting the timeline tail, not the header or the instructions', async () => {
+    memoryInstructions = undefined;
+    workerBody = bodyOfChars(7_900);
+    staleReason = 'expired keychain entry';
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'size-guard', cwd: '/tmp/repo', platform: 'claude-code' });
+    const block = result.hookSpecificOutput?.additionalContext;
+
+    expect(jsonBytes(block)).toBeLessThanOrEqual(9_000);
+    expect(block).toStartWith('[claude-mem] Claude Code OAuth token is stale: expired keychain entry');
+    expect(block).toContain(`\n\n${HEADER}\n100000 8:28p ●`);
+    expect(block).toContain('save_memory tool is available');
+    expect(block).not.toContain(workerBody);
+  });
+
+  it('drops an oversize notice rather than the body header', async () => {
+    workerBody = bodyOfChars(2_000);
+    staleReason = 'x'.repeat(9_500);
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'size-guard-notice', cwd: '/tmp/repo', platform: 'claude-code' });
+    const block = result.hookSpecificOutput?.additionalContext;
+
+    expect(jsonBytes(block)).toBeLessThanOrEqual(9_000);
+    expect(block).toStartWith(HEADER);
+    expect(block).toContain(workerBody);
+  });
+
+  it('leaves a block that fits exactly as it was', async () => {
+    workerBody = bodyOfChars(3_000);
+    const { contextHandler } = await import('../../../src/cli/handlers/context.js');
+
+    const result = await contextHandler.execute({ sessionId: 'size-guard-fits', cwd: '/tmp/repo', platform: 'claude-code' });
+
+    expect(result.hookSpecificOutput?.additionalContext).toBe(workerBody);
+  });
 });
 
 describe('contextHandler SessionStart path', () => {

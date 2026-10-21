@@ -5,6 +5,7 @@ import {
   foldWorkStateList,
   renderWorkStateLines,
   renderWorkStateList,
+  WORK_STATE_RULE,
 } from '../../../src/services/context/sections/WorkStateRenderer.js';
 
 const NOW_EPOCH = Date.UTC(2026, 9, 2, 12, 0, 0);
@@ -107,8 +108,9 @@ describe('buildWorkStateContextSection', () => {
 
     expect(section).toStartWith("# Work state: your to-do lists and working state\nUse claude-mem's work_state_write tool to track all to-do lists and multi-step work.");
     expect(section).toContain('It is your canonical to-do list: use it instead of any built-in to-do tool.');
-    // A bare work_state_read shows only what is open, so the hint for closed items names the flag.
-    expect(section).toContain('\n- Read every list, closed items included: work_state_read with includeClosed=true\n');
+    // The block leaves details out, so the rule says where they are; a bare
+    // work_state_read shows only what is open, so the hint names the flag.
+    expect(section).toContain('\n- Shown below without details: work_state_read has them (includeClosed=true adds closed items)\n');
     expect(section).toContain('\n\nStill open:\n- release: version=13.25.3');
     expect(section).toEndWith('  - [todo] timeout-decision, updated about 3 days ago');
   });
@@ -119,6 +121,68 @@ describe('buildWorkStateContextSection', () => {
     const section = buildWorkStateContextSection(entries, NOW_EPOCH);
     expect(section).not.toContain('owner-goals');
     expect(section).toContain('- release: version=13.25.3');
+  });
+
+  it('keeps the rule short', () => {
+    expect(WORK_STATE_RULE.length).toBeLessThanOrEqual(700);
+  });
+
+  it('shows each open item on one line, without its detail fields', () => {
+    const section = buildWorkStateContextSection(releaseEntries(), NOW_EPOCH);
+
+    expect(section).toContain('\n  - [doing] pointer-comments, updated 5 minutes ago\n');
+    expect(section).not.toContain('issues=3606');
+  });
+
+  it('cuts each state value to 60 characters', () => {
+    const section = buildWorkStateContextSection([entry('ticket', { url: 'u'.repeat(200) }, MINUTE_MS)], NOW_EPOCH);
+
+    expect(section).toContain(`- ticket: url=${'u'.repeat(59)}…, updated 1 minute ago`);
+  });
+
+  it('collapses a list untouched for longer than staleDays to one line', () => {
+    const stale = [
+      ...['a', 'b', 'c', 'd', 'e'].map(task => entry('old-plan', { task, status: 'todo', detail: 'x'.repeat(100) }, 21 * DAY_MS)),
+      entry('old-plan', { task: 'f', status: 'done' }, 21 * DAY_MS),
+    ];
+
+    const section = buildWorkStateContextSection([...stale, ...releaseEntries()], NOW_EPOCH, undefined, 14);
+
+    expect(section).toContain('\n- old-plan: 5 open, stale 21d');
+    expect(section).not.toContain('  - [todo] a,');
+    // A list within staleDays is still shown in full.
+    expect(section).toContain('  - [doing] pointer-comments,');
+  });
+
+  it('leaves out lists untouched for 90 days and counts them in one trailing line', () => {
+    const ancient = [
+      entry('ancient-1', { task: 'a', status: 'todo' }, 100 * DAY_MS),
+      entry('ancient-2', { topic: 'x' }, 200 * DAY_MS),
+    ];
+
+    const section = buildWorkStateContextSection([...ancient, ...releaseEntries()], NOW_EPOCH);
+
+    expect(section).not.toContain('ancient-1');
+    expect(section).not.toContain('ancient-2');
+    expect(section).toEndWith('\n- ...2 lists untouched for 90+ days; read them with work_state_read');
+  });
+
+  it('stays within 1800 characters for 40 lists of 10 items and points at work_state_read', () => {
+    const entries = Array.from({ length: 40 }, (_, list) =>
+      Array.from({ length: 10 }, (_, item) =>
+        entry(`list-${list}`, { task: `task-${item} ${'n'.repeat(40)}`, status: 'todo', note: 'd'.repeat(300) }, (list * 10 + item) * MINUTE_MS)),
+    ).flat();
+
+    const section = buildWorkStateContextSection(entries, NOW_EPOCH);
+
+    expect(section.length).toBeLessThanOrEqual(1800);
+    expect(section).toMatch(/; read them with work_state_read$/);
+  });
+
+  it('still prints every detail outside the SessionStart block', () => {
+    expect(renderWorkStateLines(releaseEntries(), NOW_EPOCH)).toContain(
+      '  - [doing] pointer-comments (issues=3606 3794 4065 3829), updated 5 minutes ago',
+    );
   });
 
   it('says nothing is open when nothing has been written', () => {
