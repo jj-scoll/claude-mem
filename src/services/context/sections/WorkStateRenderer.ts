@@ -32,13 +32,13 @@ export const FACTS_LIST = 'facts';
 const RESERVED_LISTS = new Set([FACTS_LIST, USER_FACTS_LIST, HANDOFF_LIST]);
 
 /** Facts get their own room, beside the open lists' limit. */
-export const FACTS_SECTION_CHARACTER_LIMIT = 1_200;
+export const FACTS_SECTION_CHARACTER_LIMIT = 2_000;
 
 /**
  * User facts ride on top of the SessionStart target rather than out of the
  * timeline (SearchRoutes leaves them out of the reserve); this caps the growth.
  */
-export const USER_FACTS_SECTION_CHARACTER_LIMIT = 800;
+export const USER_FACTS_SECTION_CHARACTER_LIMIT = 1_500;
 
 /** Longest fact value the SessionStart section shows. */
 const FACT_VALUE_CHARS = 240;

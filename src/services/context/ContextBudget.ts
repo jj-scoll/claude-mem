@@ -14,13 +14,13 @@ export const CONTEXT_OUTPUT_LIMIT = 10_000;
  * The margin absorbs what characters cannot see: the hook's JSON escaping and
  * multi-byte glyphs, which the host may count.
  */
-export const SESSION_START_TARGET = 8_000;
+export const SESSION_START_TARGET = 8_800;
 
 /**
  * The hook's last check, in JSON-encoded UTF-8 bytes of the delivered block
  * (the strictest reading of the host limit): anything over is cut there.
  */
-export const SESSION_START_HARD_LIMIT = 9_000;
+export const SESSION_START_HARD_LIMIT = 9_500;
 
 /**
  * Item counts cannot keep the block under that limit, because items are not a

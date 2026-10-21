@@ -232,13 +232,14 @@ describe('facts list', () => {
     expect(section).not.toContain('- Facts');
   });
 
-  it('cuts each fact to 240 characters and the section to 1200, pointing at the facts list', () => {
+  it('cuts each fact to 240 characters and the section to 2000, pointing at the facts list', () => {
     const entries = Array.from({ length: 10 }, (_, index) => entry('facts', { [`fact-${index}`]: 'v'.repeat(300) }, MINUTE_MS));
 
     const facts = buildFactsSection(entries);
 
     expect(facts).toStartWith(`# Project facts (durable)\n- fact-0: ${'v'.repeat(239)}…\n`);
-    expect(facts.length).toBeLessThanOrEqual(1200);
+    expect(facts.length).toBeLessThanOrEqual(2000);
+    expect(facts.length).toBeGreaterThan(1800);
     expect(facts).toMatch(/\n- \.\.\.\d+ more lines?; read them with work_state_read list=facts$/);
   });
 
@@ -291,10 +292,11 @@ describe('user facts', () => {
     expect(buildWorkStateContextSection(entries, NOW_EPOCH)).not.toContain('user value');
   });
 
-  it('cuts user facts to 800 characters, pointing at the user-facts list', () => {
-    const facts = buildUserFactsSection(Array.from({ length: 6 }, (_, index) => userFact({ [`fact-${index}`]: 'v'.repeat(200) }, MINUTE_MS)));
+  it('cuts user facts to 1500 characters, pointing at the user-facts list', () => {
+    const facts = buildUserFactsSection(Array.from({ length: 10 }, (_, index) => userFact({ [`fact-${index}`]: 'v'.repeat(200) }, MINUTE_MS)));
 
-    expect(facts.length).toBeLessThanOrEqual(800);
+    expect(facts.length).toBeLessThanOrEqual(1500);
+    expect(facts.length).toBeGreaterThan(1300);
     expect(facts).toMatch(/\n- \.\.\.\d+ more lines?; read them with work_state_read list=user-facts$/);
   });
 
