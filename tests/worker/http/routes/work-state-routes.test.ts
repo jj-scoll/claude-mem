@@ -316,6 +316,21 @@ describe('POST /api/handoff/claim', () => {
     expect((await write({ cwd: checkout, list: 'release', fields: { note: 'x'.repeat(3_000) } })).status).toBe(400);
   });
 
+  it('reads a handoff as one line among all lists, and in full when its list is asked for', async () => {
+    await write({ cwd: checkout, list: 'release', fields: { task: 'publish', status: 'todo' } });
+    await write({ cwd: checkout, list: 'handoff', fields: { text: `Goal: ship\n${'x'.repeat(3_000)}`, obs_ids: '101364' } });
+
+    expect(await (await read({ cwd: checkout })).text()).toBe([
+      '- release',
+      '  - [todo] publish, updated 1 minute ago',
+      '- handoff: written 1 minute ago, not shown yet; read it with work_state_read list=handoff',
+    ].join('\n'));
+    await claim({ cwd: checkout, source: 'clear' });
+    expect(await (await read({ cwd: checkout, includeClosed: 'true' })).text())
+      .toEndWith('- handoff: written 1 minute ago, shown once already; read it with work_state_read list=handoff');
+    expect(await (await read({ cwd: checkout, list: 'handoff' })).text()).toContain(`Goal: ship\n${'x'.repeat(3_000)}`);
+  });
+
   it('answers 204 when there is no handoff, and requires a cwd', async () => {
     expect((await claim({ cwd: checkout })).status).toBe(204);
     expect((await claim({ source: 'clear' })).status).toBe(400);

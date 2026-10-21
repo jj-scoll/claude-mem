@@ -11,7 +11,9 @@ import { logger } from '../../../../utils/logger.js';
 import { HANDOFF_LIST, type WorkStateFields } from '../../../sqlite/work-state.js';
 import {
   buildHandoffSection,
+  buildHandoffSummaryLine,
   fitWorkStateLines,
+  isHandoffEntry,
   renderWorkStateLines,
   WORK_STATE_SECTION_CHARACTER_LIMIT,
 } from '../../../context/sections/WorkStateRenderer.js';
@@ -148,7 +150,11 @@ export class WorkStateRoutes extends BaseRouteHandler {
 
     const checkout = getProjectContext(cwd);
     const entries = this.dbManager.getSessionStore().getWorkStateEntries(checkout.allProjects, list);
-    const lines = renderWorkStateLines(entries, Date.now(), includeClosed);
+    const nowEpoch = Date.now();
+    // A read of every list shows the handoff as one line; its text is read by name.
+    const lines = renderWorkStateLines(list ? entries : entries.filter(entry => !isHandoffEntry(entry)), nowEpoch, includeClosed);
+    const handoffSummary = list ? '' : buildHandoffSummaryLine(entries, nowEpoch);
+    if (handoffSummary) lines.push(handoffSummary);
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     if (lines.length > 0) {
