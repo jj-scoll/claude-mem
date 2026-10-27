@@ -57,6 +57,7 @@ Also keep any other non-obvious context a fresh agent would trip over (environme
 - Do not pad. Every sentence should be load-bearing information for the fresh agent.
 - Do not write the handoff from the user's perspective. Write it as a briefing document addressed to the incoming agent.
 - Long-lived facts (decisions that outlast this task, rejected options, conventions) belong in the handoff too, because it is the briefing for this task; also save each with `work_state_write` `list="facts"`, one key per fact, so every future session sees it. The handoff is shown once.
+- Keep the whole handoff under about 13K characters. When it runs long, cut narrative (Current State detail, Files in Play, the story of attempts) before cutting Goal, Decisions, Rules in Force, or Rejected Options.
 
 ## Output
 
