@@ -109,6 +109,17 @@ describe('buildHandoffSection', () => {
     ].join('\n'));
   });
 
+  it('names the handoff file it summarised when the entry carries handoff_file', () => {
+    const absolute = buildHandoffSection(handoff({ text: 'Goal: ship', handoff_file: '/home/jeff/ask/HANDOFF-claude-costs-2026-10-27.md', project_dir: '/home/jeff/ask' }), NOW_EPOCH);
+    expect(absolute).toEndWith('\nDetails: full text in /home/jeff/ask/HANDOFF-claude-costs-2026-10-27.md');
+
+    const relative = buildHandoffSection(handoff({ text: 'Goal: ship', handoff_file: 'HANDOFF-claude-costs-2026-10-27.md', project_dir: '/home/jeff/ask' }), NOW_EPOCH);
+    expect(relative).toEndWith('\nDetails: full text in /home/jeff/ask/HANDOFF-claude-costs-2026-10-27.md');
+
+    const bare = buildHandoffSection(handoff({ text: 'Goal: ship', handoff_file: 'HANDOFF-x.md' }), NOW_EPOCH);
+    expect(bare).toEndWith('\nDetails: full text in HANDOFF-x.md');
+  });
+
   it('cuts a long handoff to 3500 characters at a line boundary and says so', () => {
     const lines = Array.from({ length: 80 }, (_, index) => `${index} ${'x'.repeat(60)}`);
 
