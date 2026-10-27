@@ -261,12 +261,16 @@ function readFacts(entries: WorkStateEntry[], listName: string): Map<string, Wor
 /**
  * The block a claimed handoff is shown as: a heading with its age, its text
  * cut at a line boundary to fit HANDOFF_SECTION_CHARACTER_LIMIT, then where
- * the rest is (the observations it names, and HANDOFF.md).
+ * the rest is (the observations it names, and the file named by `handoff_file`,
+ * HANDOFF.md by default).
  */
 export function buildHandoffSection(handoff: WorkStateEntry, nowEpoch: number): string {
   const heading = `# Handoff from a previous session (written ${describeDuration(Math.max(0, nowEpoch - handoff.created_at_epoch))} ago, shown once)`;
-  const { obs_ids: obsIds, project_dir: projectDir } = handoff.fields;
-  const details = `Details: ${obsIds ? `get_observations ids ${obsIds}; ` : ''}full text in ${projectDir ? `${projectDir}/HANDOFF.md` : 'HANDOFF.md'}`;
+  const { obs_ids: obsIds, project_dir: projectDir, handoff_file: handoffFile } = handoff.fields;
+  // The file the handoff was written to; HANDOFF.md when the entry does not say.
+  const fileName = typeof handoffFile === 'string' && handoffFile.trim() ? handoffFile.trim() : 'HANDOFF.md';
+  const filePath = fileName.startsWith('/') || !projectDir ? fileName : `${projectDir}/${fileName}`;
+  const details = `Details: ${obsIds ? `get_observations ids ${obsIds}; ` : ''}full text in ${filePath}`;
   const text = String(handoff.fields.text).trim();
   const whole = [heading, text, details].join('\n');
   if (whole.length <= HANDOFF_SECTION_CHARACTER_LIMIT) return whole;
