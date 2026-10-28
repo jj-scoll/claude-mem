@@ -101,7 +101,7 @@ mock.module('child_process', () => {
   };
 });
 
-import { ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager.js';
+import { CHROMA_MCP_SHIM_PY, ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager.js';
 
 afterAll(() => {
   ChromaMcpManager.setUvxAvailabilityProbeForTesting(null);
@@ -120,9 +120,11 @@ function expectLauncherPrefixBeforeMode(args: string[], mode: 'http' | 'persiste
   const fromIdx = args.indexOf('--from');
   expect(fromIdx).toBeGreaterThan(-1);
   expect(args[fromIdx + 1]).toBe('chroma-mcp==0.2.6');
-  expect(args[fromIdx + 2]).toBe('chroma-mcp');
-  expect(args[fromIdx + 3]).toBe('--client-type');
-  expect(args[fromIdx + 4]).toBe(mode);
+  // chroma-mcp runs through the ONNX shim (python -c) rather than its own entry point.
+  expect(args.slice(fromIdx + 2, fromIdx + 4)).toEqual(['python', '-c']);
+  expect(args[fromIdx + 4]).toBe(CHROMA_MCP_SHIM_PY);
+  expect(args[fromIdx + 5]).toBe('--client-type');
+  expect(args[fromIdx + 6]).toBe(mode);
   expect(args.filter(arg => arg === 'chromadb==1.5.9')).toHaveLength(1);
   expect(args.slice(0, fromIdx)).toEqual([
     '--python', '3.13',

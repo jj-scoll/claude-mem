@@ -364,7 +364,7 @@ const stubbedProcessKill = ((pid: number, signal?: string | number) => {
 }) as typeof process.kill;
 process.kill = stubbedProcessKill;
 
-import { ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager.js';
+import { CHROMA_MCP_SHIM_PY, ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager.js';
 import { ChromaUnavailableError } from '../../../src/services/worker/search/errors.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import {
@@ -1319,7 +1319,7 @@ describe('ChromaMcpManager singleton enforcement (#2313)', () => {
       expect(args[compatibilityAt - 1]).toBe('--with');
       expect(compatibilityAt).toBeLessThan(args.indexOf('--from'));
     }
-    expect(prewarmArgs.slice(0, -1)).toEqual(transportArgs.slice(0, transportArgs.indexOf('chroma-mcp') + 1));
+    expect(prewarmArgs.slice(0, -1)).toEqual(transportArgs.slice(0, transportArgs.indexOf(CHROMA_MCP_SHIM_PY) + 1));
     expect(prewarmArgs.at(-1)).toBe('--help');
   });
 

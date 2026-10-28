@@ -9,6 +9,7 @@ import {
   sweepOrphanedChromaTrees,
   type ProcessRow,
 } from '../../src/supervisor/orphan-chroma-sweep.js';
+import { CHROMA_MCP_SHIM_PY } from '../../src/services/sync/ChromaMcpManager.js';
 
 const SELF = 4242;
 
@@ -116,6 +117,17 @@ describe('findOrphanedChromaRoots', () => {
     expect(matched.map((r) => r.pid)).not.toContain(8002);
     expect(orphans.map((r) => r.pid)).not.toContain(8002);
     expect(matched.map((r) => r.pid)).toContain(6003);
+  });
+
+  it('still matches the python leaf launched through the ONNX shim, as one ps row', () => {
+    // ps rows are split on newlines, so the shim must stay on one line, and its argv must
+    // still name chroma-mcp for the signature to see the python that holds the memory.
+    const shimLeaf = `/Users/x/.cache/uv/archive/abc/bin/python -c ${CHROMA_MCP_SHIM_PY} --client-type persistent`;
+    expect(CHROMA_MCP_SHIM_PY).not.toContain('\n');
+    const rows = parseProcessTable(`  1     0 /sbin/launchd\n 6003  6002 ${shimLeaf}`);
+    expect(rows).toHaveLength(2);
+    const { matched } = findOrphanedChromaRoots(rows, { isAlive: alive, selfPid: SELF });
+    expect(matched.map((r) => r.pid)).toEqual([6003]);
   });
 
   it('never treats the worker itself as a chroma row even if its command mentions chroma', () => {

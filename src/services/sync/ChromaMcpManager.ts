@@ -135,6 +135,80 @@ const CHROMA_MCP_DEP_OVERRIDES: ReadonlyArray<string> = [
   'pydantic<2.14',
 ];
 
+// Python run ahead of chroma-mcp to stop it burning CPU on every embedding.
+//
+// Why share the session: chroma-mcp 0.2.6 calls client.get_collection(name)
+// per tool call, which rebuilds the collection's embedding function from its
+// stored config, and chromadb's ONNXMiniLM_L6_V2 caches its InferenceSession
+// and tokenizer per instance, so every add/query reloaded the model
+// (~0.9 CPU-s each, measured against chromadb 1.5.9).
+//
+// Why one thread, no spinning: onnxruntime's default pool is one thread per
+// core, busy-waiting between ops. Embedding 6 short docs cost ~1.0 CPU-s for
+// 0.1 s wall; single-threaded it is ~0.35 CPU-s for 0.35 s wall. Sync runs in
+// the background, so the latency does not matter. Affinity (taskset) does not
+// help because onnxruntime pins its own threads.
+//
+// Patches chromadb internals, so it is tied to the chromadb pin above. If they
+// move, it logs to stderr and chroma-mcp runs unpatched; it never writes to
+// stdout, which is chroma-mcp's MCP channel.
+// tests/integration/chroma-onnx-shim.test.ts checks it in the real env.
+export const CHROMA_ONNX_PATCH_PY = `
+import sys
+try:
+    import onnxruntime as _ort
+    from chromadb.utils.embedding_functions import onnx_mini_lm_l6_v2 as _onnx
+
+    _base_session_options = _ort.SessionOptions
+
+    def _single_thread_session_options():
+        so = _base_session_options()
+        so.intra_op_num_threads = 1
+        so.inter_op_num_threads = 1
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        return so
+
+    _ort.SessionOptions = _single_thread_session_options
+
+    _ef_class = _onnx.ONNXMiniLM_L6_V2
+    _shared = {}
+
+    # Keyed on the providers an instance was constructed with: building the
+    # model rewrites self._preferred_providers (None -> available providers),
+    # so the key is read once, before the first build, and the result is also
+    # kept on the instance.
+    def _shared_across_instances(name):
+        build = getattr(_ef_class, name).func
+        slot = "_claude_mem_shared_" + name
+        def get(self):
+            value = self.__dict__.get(slot)
+            if value is None:
+                key = (name, tuple(self._preferred_providers or ()))
+                value = _shared.get(key)
+                if value is None:
+                    value = _shared[key] = build(self)
+                self.__dict__[slot] = value
+            return value
+        return property(get)
+
+    _ef_class.model = _shared_across_instances("model")
+    _ef_class.tokenizer = _shared_across_instances("tokenizer")
+except Exception as e:
+    print(f"claude-mem: chroma ONNX patch not applied, running unpatched: {e!r}", file=sys.stderr)
+`;
+
+// What the launcher runs in place of chroma-mcp's own entry point
+// (chroma_mcp:main), with the patch applied first. Passed as one line
+// (exec of a JSON string, which is also a valid Python string literal)
+// because orphan-chroma-sweep reads `ps` output row by row; the text must
+// keep naming chroma-mcp so CHROMA_LAUNCH_SIGNATURE and port-reclaim still
+// recognise the python process.
+export const CHROMA_MCP_SHIM_PY = `exec(${JSON.stringify(`${CHROMA_ONNX_PATCH_PY}
+from chroma_mcp import main
+sys.argv[0] = "chroma-mcp"
+sys.exit(main())
+`)})`;
+
 // The chromadb version the launcher pins, read from the override list itself
 // so the store record can never disagree with what uvx actually runs.
 const CHROMADB_PINNED_VERSION: string | null =
@@ -1018,12 +1092,16 @@ export class ChromaMcpManager {
       '--python', pythonVersion,
       ...depOverrideFlags,
       '--from', `chroma-mcp==${CHROMA_MCP_PINNED_VERSION}`,
-      'chroma-mcp',
+      'python', '-c', CHROMA_MCP_SHIM_PY,
     ];
   }
 
+  static buildLauncherPrefixForTesting(pythonVersion: string): string[] {
+    return ChromaMcpManager.buildLauncherPrefix(pythonVersion);
+  }
+
   private static buildPrewarmCommandArgs(commandArgs: string[]): string[] {
-    const executableIndex = commandArgs.indexOf('chroma-mcp');
+    const executableIndex = commandArgs.indexOf(CHROMA_MCP_SHIM_PY);
     const launcherPrefix = executableIndex >= 0
       ? commandArgs.slice(0, executableIndex + 1)
       : commandArgs;
